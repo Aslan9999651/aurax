@@ -1,0 +1,13 @@
+[
+  "tests/test_new_features.py::TestAdminLogs::test_admin_actions_create_logs",
+  "tests/test_new_features.py::TestAdminLogs::test_logs_endpoint",
+  "tests/test_new_features.py::TestAutoVerify::test_auto_verify_flow",
+  "tests/test_new_features.py::TestAutoVerify::test_manual_verify_path",
+  "tests/test_new_features.py::TestPositions::test_close_long_credits_margin_and_pnl",
+  "tests/test_new_features.py::TestPositions::test_close_non_existent_returns_404",
+  "tests/test_new_features.py::TestPositions::test_list_open_positions",
+  "tests/test_new_features.py::TestPositions::test_open_and_close_short",
+  "tests/test_new_features.py::TestPositions::test_open_long_position_and_response_shape",
+  "tests/test_new_features.py::TestPositions::test_positions_history_lists_closed",
+  "tests/test_new_features.py::test_websocket_receives_broadcast"
+]

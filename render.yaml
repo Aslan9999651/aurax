@@ -1,0 +1,42 @@
+services:
+  # ===== Backend (FastAPI) =====
+  - type: web
+    name: aurax-backend
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MONGO_URL          # ضع رابط MongoDB Atlas هنا
+        sync: false
+      - key: DB_NAME
+        value: aurax
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: EMERGENT_EMAIL_KEY  # مفتاح البريد المُدار (اختياري للبريد)
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: AuraX
+      - key: CORS_ORIGINS
+        value: "*"
+
+  # ===== Frontend (React static site) =====
+  - type: web
+    name: aurax-frontend
+    runtime: static
+    rootDir: frontend
+    plan: free
+    buildCommand: yarn install && yarn build
+    staticPublishPath: build
+    envVars:
+      - key: REACT_APP_BACKEND_URL   # ضع رابط aurax-backend بعد نشره
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

@@ -1,0 +1,5 @@
+{
+  "tests/test_new_features.py::TestPositions": true,
+  "tests/test_new_features.py::TestAdminLogs": true,
+  "tests/test_new_features.py::TestAutoVerify": true
+}

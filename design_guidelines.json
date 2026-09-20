@@ -1,0 +1,150 @@
+{
+  "project_name": "AuraX Crypto Exchange Terminal",
+  "identity_and_theme": {
+    "brand_name": "AuraX (أوراكس)",
+    "aesthetic_direction": "High-density Dark Terminal with Electric Cyan accents, professional precision, and fast-paced trading feedback",
+    "theme_mode": "dark_first",
+    "layout_direction": "rtl",
+    "supported_language": "Arabic (العربية)"
+  },
+  "typography": {
+    "heading_font": "Cairo, Tajawal, sans-serif",
+    "body_font": "Tajawal, Cairo, sans-serif",
+    "mono_data_font": "JetBrains Mono, Roboto Mono, monospace",
+    "font_weights": {
+      "light": 300,
+      "regular": 400,
+      "medium": 500,
+      "bold": 700,
+      "extrabold": 800
+    },
+    "hierarchy": {
+      "h1": "text-3xl lg:text-5xl font-extrabold tracking-tight",
+      "h2": "text-2xl lg:text-3xl font-bold tracking-tight",
+      "h3": "text-xl lg:text-2xl font-bold",
+      "h4": "text-lg font-semibold",
+      "body": "text-sm text-slate-300 font-normal leading-relaxed",
+      "label": "text-xs text-slate-400 font-medium uppercase tracking-wider",
+      "ticker_price": "font-mono font-semibold tracking-tight"
+    }
+  },
+  "colors": {
+    "background_base": "#0B0E14",
+    "surface_elevation_1": "#121721",
+    "surface_elevation_2": "#1A2130",
+    "surface_elevation_3": "#232D40",
+    "border_subtle": "#1E293B",
+    "border_active": "#334155",
+    "primary_brand": "#00E5FF",
+    "primary_brand_hover": "#00B8CC",
+    "bullish_green": "#00C076",
+    "bullish_green_bg": "rgba(0, 192, 118, 0.12)",
+    "bearish_red": "#FF3B5C",
+    "bearish_red_bg": "rgba(255, 59, 92, 0.12)",
+    "warning_amber": "#FFB800",
+    "text_primary": "#F8FAFC",
+    "text_secondary": "#94A3B8",
+    "text_muted": "#64748B"
+  },
+  "layout_and_spacing": {
+    "container_padding": "px-4 sm:px-6 lg:px-8",
+    "grid_gap_terminal": "gap-1",
+    "grid_gap_dashboard": "gap-4 md:gap-6",
+    "card_radius": "rounded-lg md:rounded-xl",
+    "panel_border": "border border-slate-800/80 bg-slate-900/90"
+  },
+  "pages_architecture": [
+    {
+      "route": "/",
+      "name": "الرئيسية (Home)",
+      "key_elements": [
+        "Live scrolling price ticker banner with 24h updates",
+        "Hero section with dynamic market indicators and quick trade widget",
+        "Live Market overview table with Top Gainers, Hot Pairs, and New Listings",
+        "Market Notifications & Real-time Deposit/Withdrawal activity toasts",
+        "Feature highlight cards (High Leverage Futures, Instant Spot, Security)",
+        "Mobile App download preview section"
+      ]
+    },
+    {
+      "route": "/markets",
+      "name": "الأسواق (Markets)",
+      "key_elements": [
+        "Category tabs (USDT, Layer 1, AI, DeFi, Meme)",
+        "Search input with instant filtering",
+        "Comprehensive coin table with price, 24h % change, 24h high/low, 24h volume, sparklines, and direct action buttons"
+      ]
+    },
+    {
+      "route": "/spot",
+      "name": "التداول الفوري (Spot Trading Terminal)",
+      "key_elements": [
+        "Trading pair top header with live price metrics",
+        "K-line Candlestick Chart with multi-timeframe toggles (1m, 5m, 15m, 1h, 4h, 1d)",
+        "Order Book displaying asks (red) and bids (green) with price precision and depth bars",
+        "Buy/Sell Order panel with Limit/Market tabs, percentage sliders (25%, 50%, 75%, 100%), and balance auto-fill",
+        "Recent Market Trades stream",
+        "User Open Orders, Order History, and Asset Balance panel"
+      ]
+    },
+    {
+      "route": "/futures",
+      "name": "العقود الآجلة (Futures Trading Terminal)",
+      "key_elements": [
+        "Margin type selector (Cross / Isolated)",
+        "Leverage slider (1x up to 125x)",
+        "Open Long (Buy) and Open Short (Sell) execution forms",
+        "Liquidation price calculator and funding fee timer countdown"
+      ]
+    },
+    {
+      "route": "/wallet",
+      "name": "الأصول والمحفظة (Assets & Wallet)",
+      "key_elements": [
+        "Total Net Asset Value (USDT & USD balance display)",
+        "Quick Action buttons: Deposit (إيداع), Withdraw (سحب), Transfer (تحويل)",
+        "Demo Balance refill button with instant feedback",
+        "Asset list breakdown with hide zero balance toggle"
+      ]
+    },
+    {
+      "route": "/verification-fees",
+      "name": "رسوم التحقق (Verification Fees)",
+      "key_elements": [
+        "Custom AuraX Verification Fee status & instructions panel",
+        "Admin-configured fee amount indicator",
+        "Multi-network deposit addresses selector (TRC20, ERC20, BEP20, Solana)",
+        "QR code generator and copy address triggers",
+        "TXID submission form with status tracker (Pending/Verified)"
+      ]
+    },
+    {
+      "route": "/admin",
+      "name": "لوحة الآدمن (Admin Dashboard)",
+      "key_elements": [
+        "Overview statistics (Total Users, System Volume, Fee Settings, Wallet Addresses)",
+        "User Management table (edit balances, adjust verification fee requirements, freeze accounts)",
+        "Verification Fee settings editor (update fee amounts & network deposit addresses)",
+        "Broadcast notifications modal (trigger site-wide deposit/withdrawal or market alerts)",
+        "Demo price generator velocity controller"
+      ]
+    }
+  ],
+  "image_urls": {
+    "hero_banner": "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "crypto_app_preview": "https://images.pexels.com/photos/11279903/pexels-photo-11279903.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "chart_background": "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?crop=entropy&cs=srgb&fm=jpg&q=85"
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow RTL direction (`dir=\"rtl\"`) for Arabic text across all pages and components.",
+    "Ensure numbers, prices, percentage changes, and crypto symbols (e.g. BTC/USDT, +5.24%, $64,230.50) use LTR font styling or JetBrains Mono for optimal tabular alignment.",
+    "Ensure all interactive elements (buttons, inputs, tabs, modal triggers, order forms, trade rows) feature explicit `data-testid` attributes (e.g., `data-testid=\"spot-buy-button\"`, `data-testid=\"orderbook-bid-row-0\"`).",
+    "Do NOT use completely transparent backgrounds on header, dropdown menus, popovers, or floating panels. Use backdrop-blur with minimum `bg-slate-900/95` or `bg-[#0B0E14]/95`.",
+    "Ensure live price updates simulate rapid market ticks with green flash animation for price increases and red flash for price decreases.",
+    "Ensure toast notifications using Sonner trigger periodic deposit/withdrawal alerts (e.g., 'قام مستخدم بسحب 1,500 USDT عبر شبكة TRC20')."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "design_rules": "Maintain high density trading terminal feel, zero generic templates, crisp 1px borders, glowing status accents, and strict contrast compliance.",
+    "testing_compliance": "Include data-testid on every interactive element."
+  }
+}

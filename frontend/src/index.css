@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&family=Tajawal:wght@300;400;500;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ax-bg: #0B0E14;
+  --ax-s1: #121721;
+  --ax-s2: #1A2130;
+  --ax-s3: #232D40;
+  --ax-border: #1E293B;
+  --ax-border-active: #334155;
+  --ax-cyan: #00E5FF;
+  --ax-cyan-hover: #00B8CC;
+  --ax-green: #00C076;
+  --ax-red: #FF3B5C;
+  --ax-amber: #FFB800;
+  --ax-text: #F8FAFC;
+  --ax-text2: #94A3B8;
+  --ax-text3: #64748B;
+
+  --background: 220 30% 6%;
+  --foreground: 210 40% 98%;
+  --card: 218 28% 10%;
+  --card-foreground: 210 40% 98%;
+  --popover: 218 28% 10%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 187 100% 50%;
+  --primary-foreground: 220 30% 6%;
+  --secondary: 217 30% 15%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 30% 15%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 217 30% 18%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 349 100% 62%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 20%;
+  --input: 217 33% 20%;
+  --ring: 187 100% 50%;
+  --radius: 0.75rem;
+}
+
+* { border-color: hsl(var(--border)); }
+
+html { direction: rtl; }
+
+body {
+  margin: 0;
+  background: var(--ax-bg);
+  color: var(--ax-text);
+  font-family: 'Tajawal', 'Cairo', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-heading { font-family: 'Cairo', sans-serif; }
+.font-mono, .mono { font-family: 'JetBrains Mono', monospace; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--ax-bg); }
+::-webkit-scrollbar-thumb { background: var(--ax-s3); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ax-border-active); }
+
+.text-green { color: var(--ax-green); }
+.text-red { color: var(--ax-red); }
+.text-cyan { color: var(--ax-cyan); }
+
+.flash-green { animation: flashGreen 0.6s ease-out; }
+.flash-red { animation: flashRed 0.6s ease-out; }
+@keyframes flashGreen { 0% { background-color: rgba(0,192,118,0.25); } 100% { background-color: transparent; } }
+@keyframes flashRed { 0% { background-color: rgba(255,59,92,0.25); } 100% { background-color: transparent; } }
+
+.ticker-track { display: inline-flex; white-space: nowrap; animation: tickerScroll 40s linear infinite; }
+.ticker-wrap:hover .ticker-track { animation-play-state: paused; }
+@keyframes tickerScroll { 0% { transform: translateX(0); } 100% { transform: translateX(50%); } }
+
+.glow-cyan { box-shadow: 0 0 0 1px rgba(0,229,255,0.4), 0 0 24px rgba(0,229,255,0.15); }
+.btn-cyan { background: var(--ax-cyan); color: #041016; }
+.btn-cyan:hover { background: var(--ax-cyan-hover); }
+
+.panel { background: var(--ax-s1); border: 1px solid var(--ax-border); border-radius: 0.75rem; }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.fade-up { animation: fadeUp 0.5s ease-out both; }
+
+@layer base {
+  [data-debug-wrapper="true"] { display: contents !important; }
+}

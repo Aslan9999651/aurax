@@ -28,15 +28,15 @@ flake8==7.3.0
 frozenlist==1.8.0
 fsspec==2026.9.0
 google-ai-generativelanguage==0.6.15
-google-api-core==2.33.0
+google-api-core
 google-api-python-client==2.200.0
 google-auth==2.58.0
 google-auth-httplib2==0.4.2
 google-genai==2.24.0
 google-generativeai==0.8.6
 googleapis-common-protos==1.75.0
-grpcio==1.84.0
-grpcio-status==1.71.2
+grpcio
+grpcio-status
 h11==0.16.0
 hf-xet==1.6.0
 httpcore==1.0.9
@@ -54,7 +54,7 @@ jq==1.12.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 librt==0.15.0
-litellm @ https://customer-assets.emergentagent.com/internal-asset/library/litellm-1.80.0-py3-none-any.whl#sha256=adf398c513273de9341f61822296c6b2145f7f2dc4a69daf3ac04829f5bde3f8
+litellm 
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 mccabe==0.7.0

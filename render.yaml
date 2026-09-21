@@ -5,13 +5,11 @@ services:
     runtime: python
     rootDir: backend
     plan: free
-    buildCommand: pip install -r requirements.txt --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: MONGO_URL          # ضع رابط MongoDB Atlas هنا
+      - key: DATABASE_URL        # سلسلة اتصال Supabase (Session pooler) مع كلمة المرور
         sync: false
-      - key: DB_NAME
-        value: aurax
       - key: JWT_SECRET
         generateValue: true
       - key: ADMIN_EMAIL

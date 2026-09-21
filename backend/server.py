@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import re
+import json
 import uuid
 import random
 import asyncio
@@ -20,16 +21,63 @@ from typing import Optional, List
 import bcrypt
 import jwt
 import httpx
+import asyncpg
 from fastapi import FastAPI, APIRouter, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
-# ------------------------------------------------------------------ DB
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# ------------------------------------------------------------------ DB (Supabase / PostgreSQL)
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is required (Supabase Postgres connection string)")
+
+_POOL: Optional[asyncpg.Pool] = None
+
+
+async def _init_conn(conn: asyncpg.Connection):
+    # decode/encode json & jsonb transparently as python objects
+    await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+    await conn.set_type_codec("json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+
+
+async def get_pool() -> asyncpg.Pool:
+    global _POOL
+    if _POOL is None:
+        kwargs = dict(dsn=DATABASE_URL, min_size=1, max_size=10,
+                      statement_cache_size=0, init=_init_conn)
+        low = DATABASE_URL.lower()
+        if ("localhost" not in low and "127.0.0.1" not in low and "sslmode" not in low):
+            kwargs["ssl"] = "require"
+        _POOL = await asyncpg.create_pool(**kwargs)
+    return _POOL
+
+
+async def db_fetchrow(q: str, *args) -> Optional[dict]:
+    pool = await get_pool()
+    async with pool.acquire() as c:
+        r = await c.fetchrow(q, *args)
+        return dict(r) if r else None
+
+
+async def db_fetch(q: str, *args) -> List[dict]:
+    pool = await get_pool()
+    async with pool.acquire() as c:
+        rows = await c.fetch(q, *args)
+        return [dict(r) for r in rows]
+
+
+async def db_execute(q: str, *args):
+    pool = await get_pool()
+    async with pool.acquire() as c:
+        return await c.execute(q, *args)
+
+
+async def db_scalar(q: str, *args):
+    pool = await get_pool()
+    async with pool.acquire() as c:
+        return await c.fetchval(q, *args)
+
 
 # ------------------------------------------------------------------ App
 app = FastAPI(title="AuraX API")
@@ -80,15 +128,17 @@ async def sim_events():
 
 
 async def log_admin(admin: dict, action: str, target_user_id=None, target_email=None, details=None):
-    await db.admin_logs.insert_one({
-        "id": f"log_{uuid.uuid4().hex[:10]}", "admin_email": admin.get("email"),
-        "action": action, "target_user_id": target_user_id, "target_email": target_email,
-        "details": details or {}, "created_at": datetime.now(timezone.utc).isoformat()})
+    await db_execute(
+        "INSERT INTO admin_logs (id, admin_email, action, target_user_id, target_email, details, created_at) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        f"log_{uuid.uuid4().hex[:10]}", admin.get("email"), action, target_user_id,
+        target_email, details or {}, datetime.now(timezone.utc).isoformat())
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("aurax")
 
-JWT_SECRET = os.environ["JWT_SECRET"]
+JWT_SECRET = os.environ.get("JWT_SECRET", "aurax-dev-secret-change-me")
 JWT_ALGORITHM = "HS256"
 EMAIL_BASE_URL = "https://integrations.emergentagent.com"
 EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY")
@@ -236,11 +286,37 @@ def public_user(u: dict) -> dict:
         "role": u.get("role", "user"),
         "is_verified": u.get("is_verified", False),
         "frozen": u.get("frozen", False),
-        "balances": u.get("balances", {}),
+        "balances": u.get("balances") or {},
         "picture": u.get("picture"),
         "fee_verified": u.get("fee_verified", False),
         "created_at": u.get("created_at"),
     }
+
+
+async def get_user_by_email(email: str) -> Optional[dict]:
+    return await db_fetchrow("SELECT * FROM users WHERE email = $1", email)
+
+
+async def get_user_by_id(user_id: str) -> Optional[dict]:
+    return await db_fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
+
+
+USER_COLUMNS = {
+    "email", "name", "password_hash", "role", "is_verified", "frozen", "fee_verified",
+    "picture", "auth_provider", "balances", "verification_fee_amount", "verification_currency",
+    "verification_message", "wallet_addresses", "created_at",
+}
+
+
+async def update_user_fields(user_id: str, fields: dict):
+    fields = {k: v for k, v in fields.items() if k in USER_COLUMNS}
+    if not fields:
+        return
+    cols = list(fields.keys())
+    set_clause = ", ".join(f"{c} = ${i + 1}" for i, c in enumerate(cols))
+    vals = list(fields.values())
+    await db_execute(f"UPDATE users SET {set_clause} WHERE user_id = ${len(cols) + 1}",
+                     *vals, user_id)
 
 
 async def _user_from_token(token: str) -> Optional[dict]:
@@ -248,13 +324,13 @@ async def _user_from_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         if payload.get("type") == "access":
-            u = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0})
+            u = await get_user_by_id(payload["sub"])
             if u:
                 return u
     except jwt.InvalidTokenError:
         pass
     # try session token (google)
-    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    sess = await db_fetchrow("SELECT * FROM user_sessions WHERE session_token = $1", token)
     if sess:
         exp = sess.get("expires_at")
         if isinstance(exp, str):
@@ -262,7 +338,7 @@ async def _user_from_token(token: str) -> Optional[dict]:
         if exp and exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
         if not exp or exp > datetime.now(timezone.utc):
-            return await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+            return await get_user_by_id(sess["user_id"])
     return None
 
 
@@ -381,22 +457,19 @@ DEFAULT_MESSAGE = ("لإتمام عملية التحقق من حسابك وتف�
 
 
 async def get_settings() -> dict:
-    s = await db.settings.find_one({"_id": "global"})
+    s = await db_fetchrow("SELECT * FROM settings WHERE id = 'global'")
     if not s:
-        s = {
-            "_id": "global",
-            "verification_fee_amount": 50.0,
-            "verification_currency": "USDT",
-            "verification_message": DEFAULT_MESSAGE,
-            "wallet_addresses": DEFAULT_WALLETS,
-            "networks": DEFAULT_NETWORKS,
-            "auto_verify_enabled": False,
-            "auto_verify_delay": 20,
-        }
-        await db.settings.insert_one(s)
-    s.pop("_id", None)
-    s.setdefault("auto_verify_enabled", False)
-    s.setdefault("auto_verify_delay", 20)
+        await db_execute(
+            "INSERT INTO settings (id, verification_fee_amount, verification_currency, "
+            "verification_message, wallet_addresses, networks, auto_verify_enabled, auto_verify_delay) "
+            "VALUES ('global',$1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING",
+            50.0, "USDT", DEFAULT_MESSAGE, DEFAULT_WALLETS, DEFAULT_NETWORKS, False, 20)
+        s = await db_fetchrow("SELECT * FROM settings WHERE id = 'global'")
+    s.pop("id", None)
+    if s.get("auto_verify_enabled") is None:
+        s["auto_verify_enabled"] = False
+    if s.get("auto_verify_delay") is None:
+        s["auto_verify_delay"] = 20
     return s
 
 
@@ -455,7 +528,6 @@ async def fetch_markets() -> List[dict]:
 
 
 def gen_ohlc(base: float, days: int) -> List[list]:
-    # deterministic-ish synthetic candles as fallback
     points = 60
     now = datetime.now(timezone.utc)
     step = max(1, days) * 24 * 3600 * 1000 // points
@@ -495,7 +567,6 @@ async def fetch_ohlc(coin_id: str, days: int) -> List[list]:
                 return data
     except Exception as e:
         logger.warning(f"CoinGecko ohlc error {e}")
-    # fallback
     base = 100.0
     for m in (_CACHE.get("markets", {}).get("data") or FALLBACK_MARKETS):
         if m["id"] == coin_id:
@@ -514,27 +585,23 @@ def gen_code() -> str:
 @api_router.post("/auth/register")
 async def register(body: RegisterIn):
     email = body.email.lower()
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    existing = await get_user_by_email(email)
     if existing and existing.get("is_verified"):
         raise HTTPException(status_code=400, detail="البريد الإلكتروني مسجّل بالفعل")
     if not existing:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
-        await db.users.insert_one({
-            "user_id": user_id, "email": email, "name": body.name,
-            "password_hash": hash_password(body.password), "role": "user",
-            "is_verified": False, "frozen": False, "balances": {},
-            "auth_provider": "password",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
+        await db_execute(
+            "INSERT INTO users (user_id, email, name, password_hash, role, is_verified, frozen, "
+            "balances, auth_provider, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+            user_id, email, body.name, hash_password(body.password), "user", False, False,
+            {}, "password", datetime.now(timezone.utc).isoformat())
     else:
-        await db.users.update_one({"email": email}, {"$set": {
-            "name": body.name, "password_hash": hash_password(body.password)}})
+        await update_user_fields(existing["user_id"],
+                                 {"name": body.name, "password_hash": hash_password(body.password)})
     code = gen_code()
-    await db.verification_codes.delete_many({"email": email})
-    await db.verification_codes.insert_one({
-        "email": email, "code": code,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
-    })
+    await db_execute("DELETE FROM verification_codes WHERE email = $1", email)
+    await db_execute("INSERT INTO verification_codes (email, code, expires_at) VALUES ($1,$2,$3)",
+                     email, code, (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat())
     await send_email(to=email, subject="رمز تأكيد حسابك في AuraX",
                      html=verification_email_html(code))
     logger.info(f"Verification code for {email}: {code}")
@@ -544,7 +611,8 @@ async def register(body: RegisterIn):
 @api_router.post("/auth/verify")
 async def verify(body: VerifyIn):
     email = body.email.lower()
-    rec = await db.verification_codes.find_one({"email": email}, {"_id": 0})
+    rec = await db_fetchrow("SELECT * FROM verification_codes WHERE email = $1 "
+                            "ORDER BY expires_at DESC LIMIT 1", email)
     if not rec:
         raise HTTPException(status_code=400, detail="لا يوجد رمز، أعد الإرسال")
     exp = datetime.fromisoformat(rec["expires_at"])
@@ -554,9 +622,10 @@ async def verify(body: VerifyIn):
         raise HTTPException(status_code=400, detail="انتهت صلاحية الرمز")
     if rec["code"] != body.code.strip():
         raise HTTPException(status_code=400, detail="رمز غير صحيح")
-    await db.users.update_one({"email": email}, {"$set": {"is_verified": True}})
-    await db.verification_codes.delete_many({"email": email})
-    u = await db.users.find_one({"email": email}, {"_id": 0})
+    u0 = await get_user_by_email(email)
+    await update_user_fields(u0["user_id"], {"is_verified": True})
+    await db_execute("DELETE FROM verification_codes WHERE email = $1", email)
+    u = await get_user_by_email(email)
     token = create_access_token(u["user_id"], u["email"])
     return {"token": token, "user": public_user(u)}
 
@@ -564,14 +633,13 @@ async def verify(body: VerifyIn):
 @api_router.post("/auth/resend-code")
 async def resend_code(body: ResendIn):
     email = body.email.lower()
-    u = await db.users.find_one({"email": email}, {"_id": 0})
+    u = await get_user_by_email(email)
     if not u:
         raise HTTPException(status_code=404, detail="الحساب غير موجود")
     code = gen_code()
-    await db.verification_codes.delete_many({"email": email})
-    await db.verification_codes.insert_one({
-        "email": email, "code": code,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()})
+    await db_execute("DELETE FROM verification_codes WHERE email = $1", email)
+    await db_execute("INSERT INTO verification_codes (email, code, expires_at) VALUES ($1,$2,$3)",
+                     email, code, (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat())
     await send_email(to=email, subject="رمز تأكيد حسابك في AuraX",
                      html=verification_email_html(code))
     logger.info(f"Resent code for {email}: {code}")
@@ -581,7 +649,7 @@ async def resend_code(body: ResendIn):
 @api_router.post("/auth/login")
 async def login(body: LoginIn):
     email = body.email.lower()
-    u = await db.users.find_one({"email": email}, {"_id": 0})
+    u = await get_user_by_email(email)
     if not u or not u.get("password_hash") or not verify_password(body.password, u["password_hash"]):
         raise HTTPException(status_code=401, detail="بيانات الدخول غير صحيحة")
     if not u.get("is_verified"):
@@ -603,18 +671,20 @@ async def google_session(body: GoogleSessionIn):
     except Exception:
         raise HTTPException(status_code=401, detail="فشل تسجيل الدخول عبر Google")
     email = data["email"].lower()
-    u = await db.users.find_one({"email": email}, {"_id": 0})
+    u = await get_user_by_email(email)
     if not u:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
-        u = {"user_id": user_id, "email": email, "name": data.get("name", ""),
-             "picture": data.get("picture"), "role": "user", "is_verified": True,
-             "frozen": False, "balances": {}, "auth_provider": "google",
-             "created_at": datetime.now(timezone.utc).isoformat()}
-        await db.users.insert_one(dict(u))
+        await db_execute(
+            "INSERT INTO users (user_id, email, name, picture, role, is_verified, frozen, "
+            "balances, auth_provider, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+            user_id, email, data.get("name", ""), data.get("picture"), "user", True, False,
+            {}, "google", datetime.now(timezone.utc).isoformat())
+        u = await get_user_by_email(email)
     session_token = data["session_token"]
-    await db.user_sessions.insert_one({
-        "user_id": u["user_id"], "session_token": session_token,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()})
+    await db_execute("INSERT INTO user_sessions (user_id, session_token, expires_at) VALUES ($1,$2,$3) "
+                     "ON CONFLICT (session_token) DO NOTHING",
+                     u["user_id"], session_token,
+                     (datetime.now(timezone.utc) + timedelta(days=7)).isoformat())
     if u.get("frozen"):
         raise HTTPException(status_code=403, detail="تم تجميد الحساب")
     return {"token": session_token, "user": public_user(u)}
@@ -629,7 +699,7 @@ async def me(user: dict = Depends(get_current_user)):
 async def logout(request: Request):
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
-        await db.user_sessions.delete_many({"session_token": auth[7:]})
+        await db_execute("DELETE FROM user_sessions WHERE session_token = $1", auth[7:])
     return {"status": "ok"}
 
 
@@ -663,7 +733,7 @@ async def crypto_ohlc(coin_id: str, days: int = 1):
 # ================================================================== WALLET / ORDERS
 @api_router.get("/wallet")
 async def wallet(user: dict = Depends(get_current_user)):
-    balances = user.get("balances", {})
+    balances = user.get("balances") or {}
     markets = await fetch_markets()
     price_map = {m["symbol"].upper(): m["current_price"] for m in markets}
     price_map["USDT"] = 1.0
@@ -682,10 +752,10 @@ async def wallet(user: dict = Depends(get_current_user)):
 async def demo_refill(user: dict = Depends(get_current_user)):
     if user.get("frozen"):
         raise HTTPException(status_code=403, detail="الحساب مجمّد")
-    new_amt = user.get("balances", {}).get("USDT", 0) + 10000
-    await db.users.update_one({"user_id": user["user_id"]},
-                              {"$set": {"balances.USDT": new_amt}})
-    return {"status": "ok", "usdt": new_amt}
+    balances = dict(user.get("balances") or {})
+    balances["USDT"] = balances.get("USDT", 0) + 10000
+    await update_user_fields(user["user_id"], {"balances": balances})
+    return {"status": "ok", "usdt": balances["USDT"]}
 
 
 @api_router.post("/orders")
@@ -698,36 +768,38 @@ async def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
     price = body.price if (body.order_type == "limit" and body.price) else (coin["current_price"] if coin else 0)
     if price <= 0:
         raise HTTPException(status_code=400, detail="سعر غير صالح")
-    balances = user.get("balances", {})
+    balances = dict(user.get("balances") or {})
     usdt = balances.get("USDT", 0)
     coin_bal = balances.get(base_sym, 0)
     cost = price * body.amount
-    updates = {}
     if body.market == "spot":
         if body.side == "buy":
             if usdt < cost:
                 raise HTTPException(status_code=400, detail="رصيد USDT غير كافٍ")
-            updates[f"balances.USDT"] = round(usdt - cost, 8)
-            updates[f"balances.{base_sym}"] = round(coin_bal + body.amount, 8)
+            balances["USDT"] = round(usdt - cost, 8)
+            balances[base_sym] = round(coin_bal + body.amount, 8)
         else:
             if coin_bal < body.amount:
                 raise HTTPException(status_code=400, detail=f"رصيد {base_sym} غير كافٍ")
-            updates[f"balances.{base_sym}"] = round(coin_bal - body.amount, 8)
-            updates[f"balances.USDT"] = round(usdt + cost, 8)
+            balances[base_sym] = round(coin_bal - body.amount, 8)
+            balances["USDT"] = round(usdt + cost, 8)
     else:  # futures demo: margin = cost / leverage
         margin = cost / max(1, body.leverage)
         if usdt < margin:
             raise HTTPException(status_code=400, detail="هامش USDT غير كافٍ")
-        updates[f"balances.USDT"] = round(usdt - margin, 8)
-    if updates:
-        await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
+        balances["USDT"] = round(usdt - margin, 8)
+    await update_user_fields(user["user_id"], {"balances": balances})
     order = {"id": f"ord_{uuid.uuid4().hex[:10]}", "user_id": user["user_id"],
              "pair": body.pair, "market": body.market, "side": body.side,
              "order_type": body.order_type, "price": price, "amount": body.amount,
              "leverage": body.leverage, "status": "filled",
              "created_at": datetime.now(timezone.utc).isoformat()}
-    await db.orders.insert_one(dict(order))
-    order.pop("_id", None)
+    await db_execute(
+        "INSERT INTO orders (id, user_id, pair, market, side, order_type, price, amount, "
+        "leverage, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+        order["id"], order["user_id"], order["pair"], order["market"], order["side"],
+        order["order_type"], order["price"], order["amount"], order["leverage"],
+        order["status"], order["created_at"])
     position = None
     if body.market == "futures":
         pmargin = (price * body.amount) / max(1, body.leverage)
@@ -736,24 +808,31 @@ async def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
                     "entry_price": price, "amount": body.amount, "leverage": body.leverage,
                     "margin": round(pmargin, 8), "status": "open", "pnl": 0.0,
                     "opened_at": datetime.now(timezone.utc).isoformat()}
-        await db.positions.insert_one(dict(position))
-        position.pop("_id", None)
+        await db_execute(
+            "INSERT INTO positions (id, user_id, pair, symbol, side, entry_price, amount, "
+            "leverage, margin, status, pnl, opened_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+            position["id"], position["user_id"], position["pair"], position["symbol"],
+            position["side"], position["entry_price"], position["amount"], position["leverage"],
+            position["margin"], position["status"], position["pnl"], position["opened_at"])
     return {"status": "filled", "order": order, "position": position}
 
 
 @api_router.get("/positions")
 async def list_positions(user: dict = Depends(get_current_user)):
-    return await db.positions.find({"user_id": user["user_id"], "status": "open"}, {"_id": 0}).sort("opened_at", -1).to_list(100)
+    return await db_fetch("SELECT * FROM positions WHERE user_id = $1 AND status = 'open' "
+                          "ORDER BY opened_at DESC LIMIT 100", user["user_id"])
 
 
 @api_router.get("/positions/history")
 async def positions_history(user: dict = Depends(get_current_user)):
-    return await db.positions.find({"user_id": user["user_id"], "status": "closed"}, {"_id": 0}).sort("closed_at", -1).to_list(100)
+    return await db_fetch("SELECT * FROM positions WHERE user_id = $1 AND status = 'closed' "
+                          "ORDER BY closed_at DESC LIMIT 100", user["user_id"])
 
 
 @api_router.post("/positions/{position_id}/close")
 async def close_position(position_id: str, user: dict = Depends(get_current_user)):
-    pos = await db.positions.find_one({"id": position_id, "user_id": user["user_id"], "status": "open"}, {"_id": 0})
+    pos = await db_fetchrow("SELECT * FROM positions WHERE id = $1 AND user_id = $2 AND status = 'open'",
+                            position_id, user["user_id"])
     if not pos:
         raise HTTPException(status_code=404, detail="المركز غير موجود")
     markets = await fetch_markets()
@@ -764,27 +843,28 @@ async def close_position(position_id: str, user: dict = Depends(get_current_user
     else:
         pnl = (pos["entry_price"] - close_price) * pos["amount"]
     returned = max(0.0, pos["margin"] + pnl)
-    u = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    new_usdt = round(u.get("balances", {}).get("USDT", 0) + returned, 8)
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"balances.USDT": new_usdt}})
-    await db.positions.update_one({"id": position_id}, {"$set": {
-        "status": "closed", "close_price": close_price, "pnl": round(pnl, 8),
-        "closed_at": datetime.now(timezone.utc).isoformat()}})
+    u = await get_user_by_id(user["user_id"])
+    balances = dict(u.get("balances") or {})
+    balances["USDT"] = round(balances.get("USDT", 0) + returned, 8)
+    await update_user_fields(user["user_id"], {"balances": balances})
+    await db_execute("UPDATE positions SET status = 'closed', close_price = $1, pnl = $2, "
+                     "closed_at = $3 WHERE id = $4",
+                     close_price, round(pnl, 8), datetime.now(timezone.utc).isoformat(), position_id)
     return {"status": "closed", "pnl": round(pnl, 8), "returned": round(returned, 8), "close_price": close_price}
 
 
 @api_router.get("/orders")
 async def list_orders(user: dict = Depends(get_current_user)):
-    rows = await db.orders.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return rows
+    return await db_fetch("SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100",
+                          user["user_id"])
 
 
 # ================================================================== VERIFICATION FEES
 def effective_config(user: dict, s: dict) -> dict:
     return {
-        "fee_amount": user.get("verification_fee_amount", s["verification_fee_amount"]),
-        "currency": user.get("verification_currency", s["verification_currency"]),
-        "message": user.get("verification_message", s["verification_message"]),
+        "fee_amount": user.get("verification_fee_amount") if user.get("verification_fee_amount") is not None else s["verification_fee_amount"],
+        "currency": user.get("verification_currency") or s["verification_currency"],
+        "message": user.get("verification_message") or s["verification_message"],
         "wallet_addresses": user.get("wallet_addresses") or s["wallet_addresses"],
         "networks": s["networks"],
     }
@@ -794,8 +874,8 @@ def effective_config(user: dict, s: dict) -> dict:
 async def verification_config(user: dict = Depends(get_current_user)):
     s = await get_settings()
     cfg = effective_config(user, s)
-    sub = await db.fee_submissions.find_one({"user_id": user["user_id"]}, {"_id": 0},
-                                            sort=[("created_at", -1)])
+    sub = await db_fetchrow("SELECT * FROM fee_submissions WHERE user_id = $1 "
+                            "ORDER BY created_at DESC LIMIT 1", user["user_id"])
     cfg["submission"] = sub
     return cfg
 
@@ -803,8 +883,8 @@ async def verification_config(user: dict = Depends(get_current_user)):
 async def auto_verify_task(sub_id: str, user_id: str, delay: int):
     try:
         await asyncio.sleep(max(3, delay))
-        await db.fee_submissions.update_one({"id": sub_id}, {"$set": {"status": "verified"}})
-        await db.users.update_one({"user_id": user_id}, {"$set": {"fee_verified": True}})
+        await db_execute("UPDATE fee_submissions SET status = 'verified' WHERE id = $1", sub_id)
+        await update_user_fields(user_id, {"fee_verified": True})
         await ws_manager.broadcast({"type": "notification", "ntype": "system",
                                     "message": "تمت معالجة طلب تحقق جديد والموافقة عليه تلقائياً"})
     except Exception as e:
@@ -816,8 +896,10 @@ async def submit_fee(body: SubmitFeeIn, user: dict = Depends(get_current_user)):
     rec = {"id": f"fee_{uuid.uuid4().hex[:10]}", "user_id": user["user_id"],
            "email": user["email"], "network": body.network, "txid": body.txid,
            "status": "pending", "created_at": datetime.now(timezone.utc).isoformat()}
-    await db.fee_submissions.insert_one(dict(rec))
-    rec.pop("_id", None)
+    await db_execute(
+        "INSERT INTO fee_submissions (id, user_id, email, network, txid, status, created_at) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        rec["id"], rec["user_id"], rec["email"], rec["network"], rec["txid"], rec["status"], rec["created_at"])
     s = await get_settings()
     auto = bool(s.get("auto_verify_enabled"))
     if auto:
@@ -828,8 +910,7 @@ async def submit_fee(body: SubmitFeeIn, user: dict = Depends(get_current_user)):
 # ================================================================== NOTIFICATIONS
 @api_router.get("/notifications")
 async def notifications():
-    rows = await db.notifications.find({}, {"_id": 0}).sort("created_at", -1).to_list(30)
-    return rows
+    return await db_fetch("SELECT * FROM notifications ORDER BY created_at DESC LIMIT 30")
 
 
 @api_router.websocket("/ws")
@@ -847,10 +928,10 @@ async def ws_endpoint(ws: WebSocket):
 # ================================================================== ADMIN
 @api_router.get("/admin/stats")
 async def admin_stats(admin: dict = Depends(get_admin_user)):
-    total_users = await db.users.count_documents({})
-    verified = await db.users.count_documents({"is_verified": True})
-    pending_fees = await db.fee_submissions.count_documents({"status": "pending"})
-    orders = await db.orders.count_documents({})
+    total_users = await db_scalar("SELECT count(*) FROM users")
+    verified = await db_scalar("SELECT count(*) FROM users WHERE is_verified = TRUE")
+    pending_fees = await db_scalar("SELECT count(*) FROM fee_submissions WHERE status = 'pending'")
+    orders = await db_scalar("SELECT count(*) FROM orders")
     s = await get_settings()
     return {"total_users": total_users, "verified_users": verified,
             "pending_fees": pending_fees, "total_orders": orders, "settings": s}
@@ -858,15 +939,18 @@ async def admin_stats(admin: dict = Depends(get_admin_user)):
 
 @api_router.get("/admin/users")
 async def admin_users(admin: dict = Depends(get_admin_user)):
-    rows = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(1000)
+    rows = await db_fetch("SELECT * FROM users ORDER BY created_at DESC LIMIT 1000")
+    for r in rows:
+        r.pop("password_hash", None)
     return rows
 
 
 @api_router.get("/admin/users/{user_id}")
 async def admin_user_detail(user_id: str, admin: dict = Depends(get_admin_user)):
-    u = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    u = await get_user_by_id(user_id)
     if not u:
         raise HTTPException(status_code=404, detail="المستخدم غير موجود")
+    u.pop("password_hash", None)
     s = await get_settings()
     u["effective_config"] = effective_config(u, s)
     return u
@@ -874,25 +958,31 @@ async def admin_user_detail(user_id: str, admin: dict = Depends(get_admin_user))
 
 @api_router.patch("/admin/users/{user_id}")
 async def admin_update_user(user_id: str, body: AdminUserUpdate, admin: dict = Depends(get_admin_user)):
-    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    u = await get_user_by_id(user_id)
     if not u:
         raise HTTPException(status_code=404, detail="المستخدم غير موجود")
     sets = {}
-    balances = u.get("balances", {})
+    balances = dict(u.get("balances") or {})
+    balances_changed = False
     if body.add_balance_currency and body.add_balance_amount is not None:
         cur = body.add_balance_currency.upper()
-        sets[f"balances.{cur}"] = round(balances.get(cur, 0) + body.add_balance_amount, 8)
+        balances[cur] = round(balances.get(cur, 0) + body.add_balance_amount, 8)
+        balances_changed = True
     if body.set_balance_currency and body.set_balance_amount is not None:
         cur = body.set_balance_currency.upper()
-        sets[f"balances.{cur}"] = round(body.set_balance_amount, 8)
+        balances[cur] = round(body.set_balance_amount, 8)
+        balances_changed = True
+    if balances_changed:
+        sets["balances"] = balances
     for f in ["verification_fee_amount", "verification_currency", "verification_message",
               "wallet_addresses", "frozen", "is_verified", "fee_verified", "role"]:
         val = getattr(body, f)
         if val is not None:
             sets[f] = val
     if sets:
-        await db.users.update_one({"user_id": user_id}, {"$set": sets})
-    u2 = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+        await update_user_fields(user_id, sets)
+    u2 = await get_user_by_id(user_id)
+    u2.pop("password_hash", None)
     await log_admin(admin, "update_user", user_id, u2.get("email"),
                     {k: str(v)[:120] for k, v in sets.items()})
     return public_user(u2) | {"verification_fee_amount": u2.get("verification_fee_amount"),
@@ -910,39 +1000,41 @@ async def admin_put_settings(body: SettingsUpdate, admin: dict = Depends(get_adm
     await get_settings()
     sets = {k: v for k, v in body.model_dump().items() if v is not None}
     if sets:
-        await db.settings.update_one({"_id": "global"}, {"$set": sets})
+        cols = list(sets.keys())
+        set_clause = ", ".join(f"{c} = ${i + 1}" for i, c in enumerate(cols))
+        await db_execute(f"UPDATE settings SET {set_clause} WHERE id = 'global'", *sets.values())
     await log_admin(admin, "update_settings", None, None, {k: str(v)[:120] for k, v in sets.items()})
     return await get_settings()
 
 
 @api_router.get("/admin/fee-submissions")
 async def admin_fee_subs(admin: dict = Depends(get_admin_user)):
-    return await db.fee_submissions.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return await db_fetch("SELECT * FROM fee_submissions ORDER BY created_at DESC LIMIT 500")
 
 
 @api_router.patch("/admin/fee-submissions/{sub_id}")
 async def admin_update_fee(sub_id: str, status: str, admin: dict = Depends(get_admin_user)):
-    sub = await db.fee_submissions.find_one({"id": sub_id}, {"_id": 0})
+    sub = await db_fetchrow("SELECT * FROM fee_submissions WHERE id = $1", sub_id)
     if not sub:
         raise HTTPException(status_code=404, detail="الطلب غير موجود")
-    await db.fee_submissions.update_one({"id": sub_id}, {"$set": {"status": status}})
+    await db_execute("UPDATE fee_submissions SET status = $1 WHERE id = $2", status, sub_id)
     if status == "verified":
-        await db.users.update_one({"user_id": sub["user_id"]}, {"$set": {"fee_verified": True}})
+        await update_user_fields(sub["user_id"], {"fee_verified": True})
     await log_admin(admin, f"fee_{status}", sub.get("user_id"), sub.get("email"), {"txid": sub.get("txid")})
     return {"status": "ok"}
 
 
 @api_router.get("/admin/logs")
 async def admin_get_logs(admin: dict = Depends(get_admin_user)):
-    return await db.admin_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return await db_fetch("SELECT * FROM admin_logs ORDER BY created_at DESC LIMIT 500")
 
 
 @api_router.post("/admin/notifications")
 async def admin_broadcast(body: BroadcastIn, admin: dict = Depends(get_admin_user)):
     rec = {"id": f"ntf_{uuid.uuid4().hex[:10]}", "ntype": body.ntype, "message": body.message,
            "created_at": datetime.now(timezone.utc).isoformat()}
-    await db.notifications.insert_one(dict(rec))
-    rec.pop("_id", None)
+    await db_execute("INSERT INTO notifications (id, ntype, message, created_at) VALUES ($1,$2,$3,$4)",
+                     rec["id"], rec["ntype"], rec["message"], rec["created_at"])
     await ws_manager.broadcast({"type": "notification", "ntype": rec["ntype"], "message": rec["message"]})
     await log_admin(admin, "broadcast", None, None, {"ntype": body.ntype, "message": body.message[:120]})
     return rec
@@ -951,7 +1043,7 @@ async def admin_broadcast(body: BroadcastIn, admin: dict = Depends(get_admin_use
 # ================================================================== STARTUP
 @api_router.get("/")
 async def root():
-    return {"message": "AuraX API", "status": "ok"}
+    return {"message": "AuraX API", "status": "ok", "db": "supabase-postgres"}
 
 
 @api_router.get("/download/platform")
@@ -962,51 +1054,149 @@ async def download_platform():
     return FileResponse(str(path), media_type="application/zip", filename="aurax-full-platform.zip")
 
 
-@api_router.get("/download/admin")
-async def download_admin():
-    path = ROOT_DIR.parent / "aurax-admin-panel.zip"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="الملف غير متوفر")
-    return FileResponse(str(path), media_type="application/zip", filename="aurax-admin-panel.zip")
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT DEFAULT '',
+    password_hash TEXT,
+    role TEXT DEFAULT 'user',
+    is_verified BOOLEAN DEFAULT FALSE,
+    frozen BOOLEAN DEFAULT FALSE,
+    fee_verified BOOLEAN DEFAULT FALSE,
+    picture TEXT,
+    auth_provider TEXT DEFAULT 'password',
+    balances JSONB DEFAULT '{}'::jsonb,
+    verification_fee_amount DOUBLE PRECISION,
+    verification_currency TEXT,
+    verification_message TEXT,
+    wallet_addresses JSONB,
+    created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS user_sessions (
+    session_token TEXT PRIMARY KEY,
+    user_id TEXT,
+    expires_at TEXT
+);
+CREATE INDEX IF NOT EXISTS user_sessions_user_idx ON user_sessions(user_id);
+CREATE TABLE IF NOT EXISTS verification_codes (
+    email TEXT,
+    code TEXT,
+    expires_at TEXT
+);
+CREATE INDEX IF NOT EXISTS verification_codes_email_idx ON verification_codes(email);
+CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    pair TEXT,
+    market TEXT,
+    side TEXT,
+    order_type TEXT,
+    price DOUBLE PRECISION,
+    amount DOUBLE PRECISION,
+    leverage INTEGER,
+    status TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS orders_user_idx ON orders(user_id);
+CREATE TABLE IF NOT EXISTS positions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    pair TEXT,
+    symbol TEXT,
+    side TEXT,
+    entry_price DOUBLE PRECISION,
+    amount DOUBLE PRECISION,
+    leverage INTEGER,
+    margin DOUBLE PRECISION,
+    status TEXT,
+    pnl DOUBLE PRECISION,
+    close_price DOUBLE PRECISION,
+    opened_at TEXT,
+    closed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS positions_user_idx ON positions(user_id);
+CREATE TABLE IF NOT EXISTS fee_submissions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    email TEXT,
+    network TEXT,
+    txid TEXT,
+    status TEXT,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS fee_submissions_user_idx ON fee_submissions(user_id);
+CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    ntype TEXT,
+    message TEXT,
+    created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS admin_logs (
+    id TEXT PRIMARY KEY,
+    admin_email TEXT,
+    action TEXT,
+    target_user_id TEXT,
+    target_email TEXT,
+    details JSONB,
+    created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS settings (
+    id TEXT PRIMARY KEY,
+    verification_fee_amount DOUBLE PRECISION,
+    verification_currency TEXT,
+    verification_message TEXT,
+    wallet_addresses JSONB,
+    networks JSONB,
+    auto_verify_enabled BOOLEAN DEFAULT FALSE,
+    auto_verify_delay INTEGER DEFAULT 20
+);
+"""
+
+
+async def ensure_schema():
+    pool = await get_pool()
+    async with pool.acquire() as c:
+        await c.execute(SCHEMA_SQL)
 
 
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("user_id", unique=True)
-    await db.user_sessions.create_index("session_token")
+    await ensure_schema()
     await get_settings()
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@aurax.io").lower()
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
-    existing = await db.users.find_one({"email": admin_email})
+    existing = await get_user_by_email(admin_email)
     if not existing:
-        await db.users.insert_one({
-            "user_id": f"user_{uuid.uuid4().hex[:12]}", "email": admin_email,
-            "name": "AuraX Admin", "password_hash": hash_password(admin_pw),
-            "role": "admin", "is_verified": True, "frozen": False,
-            "balances": {"USDT": 0}, "auth_provider": "password",
-            "created_at": datetime.now(timezone.utc).isoformat()})
+        await db_execute(
+            "INSERT INTO users (user_id, email, name, password_hash, role, is_verified, frozen, "
+            "balances, auth_provider, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+            f"user_{uuid.uuid4().hex[:12]}", admin_email, "AuraX Admin", hash_password(admin_pw),
+            "admin", True, False, {"USDT": 0}, "password", datetime.now(timezone.utc).isoformat())
         logger.info("Admin seeded")
     elif not verify_password(admin_pw, existing.get("password_hash", "")):
-        await db.users.update_one({"email": admin_email},
-                                  {"$set": {"password_hash": hash_password(admin_pw), "role": "admin"}})
+        await update_user_fields(existing["user_id"],
+                                 {"password_hash": hash_password(admin_pw), "role": "admin"})
     # seed a couple of market notifications
-    if await db.notifications.count_documents({}) == 0:
+    count = await db_scalar("SELECT count(*) FROM notifications")
+    if not count:
         seeds = [
             {"ntype": "market", "message": "إدراج جديد: تم إضافة زوج تداول جديد على AuraX"},
             {"ntype": "deposit", "message": "قام مستخدم بإيداع 5,000 USDT عبر شبكة TRC20"},
             {"ntype": "system", "message": "مرحباً بك في منصة AuraX للتداول"},
         ]
         for s in seeds:
-            s["id"] = f"ntf_{uuid.uuid4().hex[:10]}"
-            s["created_at"] = datetime.now(timezone.utc).isoformat()
-            await db.notifications.insert_one(s)
+            await db_execute("INSERT INTO notifications (id, ntype, message, created_at) VALUES ($1,$2,$3,$4)",
+                             f"ntf_{uuid.uuid4().hex[:10]}", s["ntype"], s["message"],
+                             datetime.now(timezone.utc).isoformat())
     asyncio.create_task(sim_events())
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    client.close()
+    global _POOL
+    if _POOL is not None:
+        await _POOL.close()
 
 
 app.include_router(api_router)

@@ -10,7 +10,11 @@ import json
 import uuid
 import random
 import asyncio
+import smtplib
+import secrets
 import logging
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import ipaddress
 from datetime import datetime, timezone, timedelta
 from html import escape
@@ -36,7 +40,6 @@ _POOL: Optional[asyncpg.Pool] = None
 
 
 async def _init_conn(conn: asyncpg.Connection):
-    # decode/encode json & jsonb transparently as python objects
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
     await conn.set_type_codec("json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
@@ -140,8 +143,12 @@ logger = logging.getLogger("aurax")
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "aurax-dev-secret-change-me")
 JWT_ALGORITHM = "HS256"
-EMAIL_BASE_URL = "https://integrations.emergentagent.com"
-EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY")
+
+# Gmail SMTP configuration with App Password integrated
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "aurax1trading@gmail.com")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "mfwylsrbgrcnjnib")
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "AuraX")
 
 # ================================================================== EMAIL GATE
@@ -218,21 +225,50 @@ def _assert_safe_email(subject: str, html: str) -> None:
                 raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r} (G3)")
 
 
-async def send_email(*, to: str, subject: str, html: str) -> Optional[str]:
-    if not EMAIL_KEY:
-        logger.warning("EMERGENT_EMAIL_KEY missing; skipping email send")
-        return None
+async def send_email(*, to: str, subject: str, html: str) -> str:
+    if not SMTP_PASSWORD:
+        logger.error("SMTP_PASSWORD is missing")
+        raise HTTPException(status_code=500, detail="خدمة البريد غير مهيأة على الخادم")
+
     _assert_safe_email(subject, html)
-    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
+
+    def _send():
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{EMAIL_FROM_NAME} <{SMTP_USER}>"
+        msg["To"] = to
+
+        plain_text = (
+            "رمز تأكيد حسابك في AuraX\n\n"
+            "افتح الرسالة لعرض رمز التفعيل.\n"
+            "الرمز صالح لمدة 15 دقيقة."
+        )
+        msg.attach(MIMEText(plain_text, "plain", "utf-8"))
+        msg.attach(MIMEText(html, "html", "utf-8"))
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, [to], msg.as_string())
+
     try:
-        async with httpx.AsyncClient(timeout=30) as c:
-            resp = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
-                                headers={"X-Email-Key": EMAIL_KEY}, json=payload)
-        resp.raise_for_status()
-        return resp.json().get("id")
-    except Exception as e:
-        logger.error(f"Email send error: {e}")
-        return None
+        await asyncio.to_thread(_send)
+        logger.info("Verification email sent successfully to %s", to)
+        return "sent"
+    except smtplib.SMTPAuthenticationError:
+        logger.exception("Gmail authentication failed")
+        raise HTTPException(
+            status_code=502,
+            detail="فشل تسجيل الدخول إلى حساب البريد. تحقق من Google App Password."
+        )
+    except Exception:
+        logger.exception("Failed to send email")
+        raise HTTPException(
+            status_code=502,
+            detail="تعذر إرسال رسالة التفعيل إلى البريد الإلكتروني."
+        )
 
 
 def verification_email_html(code: str) -> str:
@@ -320,7 +356,6 @@ async def update_user_fields(user_id: str, fields: dict):
 
 
 async def _user_from_token(token: str) -> Optional[dict]:
-    # try JWT
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         if payload.get("type") == "access":
@@ -329,7 +364,6 @@ async def _user_from_token(token: str) -> Optional[dict]:
                 return u
     except jwt.InvalidTokenError:
         pass
-    # try session token (google)
     sess = await db_fetchrow("SELECT * FROM user_sessions WHERE session_token = $1", token)
     if sess:
         exp = sess.get("expires_at")
@@ -390,9 +424,9 @@ class GoogleSessionIn(BaseModel):
 
 class OrderIn(BaseModel):
     pair: str
-    market: str = "spot"          # spot | futures
-    side: str                      # buy | sell | long | short
-    order_type: str = "market"     # market | limit
+    market: str = "spot"
+    side: str
+    order_type: str = "market"
     price: Optional[float] = None
     amount: float
     leverage: int = 1
@@ -429,7 +463,7 @@ class SettingsUpdate(BaseModel):
 
 
 class BroadcastIn(BaseModel):
-    ntype: str = "market"   # market | deposit | withdraw | system
+    ntype: str = "market"
     message: str
 
 
@@ -519,7 +553,6 @@ async def fetch_markets() -> List[dict]:
             data = r.json()
             _CACHE["markets"] = {"ts": now, "data": data}
             return data
-        logger.warning(f"CoinGecko markets status {r.status_code}, using fallback/cache")
     except Exception as e:
         logger.warning(f"CoinGecko markets error {e}")
     if cached:
@@ -579,7 +612,7 @@ async def fetch_ohlc(coin_id: str, days: int) -> List[list]:
 
 # ================================================================== AUTH ROUTES
 def gen_code() -> str:
-    return f"{random.randint(0, 999999):06d}"
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 
 @api_router.post("/auth/register")
@@ -604,7 +637,6 @@ async def register(body: RegisterIn):
                      email, code, (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat())
     await send_email(to=email, subject="رمز تأكيد حسابك في AuraX",
                      html=verification_email_html(code))
-    logger.info(f"Verification code for {email}: {code}")
     return {"status": "code_sent", "email": email}
 
 
@@ -642,7 +674,6 @@ async def resend_code(body: ResendIn):
                      email, code, (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat())
     await send_email(to=email, subject="رمز تأكيد حسابك في AuraX",
                      html=verification_email_html(code))
-    logger.info(f"Resent code for {email}: {code}")
     return {"status": "code_sent"}
 
 
@@ -783,7 +814,7 @@ async def create_order(body: OrderIn, user: dict = Depends(get_current_user)):
                 raise HTTPException(status_code=400, detail=f"رصيد {base_sym} غير كافٍ")
             balances[base_sym] = round(coin_bal - body.amount, 8)
             balances["USDT"] = round(usdt + cost, 8)
-    else:  # futures demo: margin = cost / leverage
+    else:
         margin = cost / max(1, body.leverage)
         if usdt < margin:
             raise HTTPException(status_code=400, detail="هامش USDT غير كافٍ")

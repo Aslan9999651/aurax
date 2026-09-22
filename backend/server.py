@@ -10,11 +10,7 @@ import json
 import uuid
 import random
 import asyncio
-import smtplib
-import secrets
 import logging
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 import ipaddress
 from datetime import datetime, timezone, timedelta
 from html import escape
@@ -34,7 +30,7 @@ from pydantic import BaseModel, EmailStr, Field
 # ------------------------------------------------------------------ DB (Supabase / PostgreSQL)
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DB_URL")
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is required (Supabase Postgres connection string)")
+    raise RuntimeError("DATABASE_URL is required (SUPABASE_DB_URL or DATABASE_URL)")
 
 _POOL: Optional[asyncpg.Pool] = None
 
@@ -144,156 +140,58 @@ logger = logging.getLogger("aurax")
 JWT_SECRET = os.environ.get("JWT_SECRET", "aurax-dev-secret-change-me")
 JWT_ALGORITHM = "HS256"
 
-# Gmail SMTP configuration with App Password integrated
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER", "aurax1trading@gmail.com")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "mfwylsrbgrcnjnib")
+# Supabase Auth configuration embedded directly with image credentials + env fallback
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://txfbymcnrccquwshxgxe.supabase.co").rstrip("/")
+SUPABASE_PUBLISHABLE_KEY = os.environ.get(
+    "SUPABASE_PUBLISHABLE_KEY",
+    os.environ.get("SUPABASE_ANON_KEY", "sb_publishable_E7bbkcNhvU0Wd1xpMthbg_eYJETwu")
+)
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "AuraX")
 
-# ================================================================== EMAIL GATE
-_SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
-_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
-             "send us your password", "enter your password below", "confirm your card number",
-             "your full card number", "seed phrase", "recovery phrase", "verify your card",
-             "social security number", "confirm your bank details")
-_HOSTISH = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})", re.I)
-
-
-def _host_ok(host: str) -> bool:
-    if not host or "xn--" in host:
-        return False
+# ================================================================== SUPABASE AUTH EMAIL
+async def supabase_auth_request(method: str, path: str, payload: Optional[dict] = None,
+                                access_token: Optional[str] = None) -> dict:
+    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
+        raise HTTPException(status_code=500, detail="إعدادات Supabase Auth غير مكتملة")
+    headers = {
+        "apikey": SUPABASE_PUBLISHABLE_KEY,
+        "Content-Type": "application/json",
+    }
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
     try:
-        ipaddress.ip_address(host)
-        return False
-    except ValueError:
-        pass
-    return not any(host == s or host.endswith("." + s) for s in _SHORTENERS)
+        async with httpx.AsyncClient(timeout=25) as c:
+            r = await c.request(method, f"{SUPABASE_URL}/auth/v1/{path.lstrip('/')}",
+                                headers=headers, json=payload or {})
+        data = r.json() if r.content else {}
+        if r.status_code >= 400:
+            detail = data.get("msg") or data.get("message") or data.get("error_description") or data.get("error")
+            raise HTTPException(status_code=400, detail=detail or "فشل طلب Supabase Auth")
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Supabase Auth error: {e}")
+        raise HTTPException(status_code=502, detail="تعذر الاتصال بخدمة Supabase Auth")
 
 
-def _same_site(shown: str, real: str) -> bool:
-    return shown == real or real.endswith("." + shown) or shown.endswith("." + real)
-
-
-class _EmailScan(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.tags, self.urls, self.anchors = set(), [], []
-        self._href, self._text = None, []
-
-    def handle_starttag(self, tag, attrs):
-        self.tags.add(tag.lower())
-        self.urls += [v for k, v in attrs if k.lower() in ("href", "src") and v]
-        if tag.lower() == "a":
-            self._href = dict((k.lower(), v) for k, v in attrs).get("href")
-            self._text = []
-
-    def handle_data(self, data):
-        if self._href is not None:
-            self._text.append(data)
-
-    def handle_endtag(self, tag):
-        if tag.lower() == "a" and self._href is not None:
-            self.anchors.append((self._href, "".join(self._text)))
-            self._href, self._text = None, []
-
-
-def _assert_safe_email(subject: str, html: str) -> None:
-    scan = _EmailScan()
-    scan.feed(html)
-    if scan.tags & {"form", "input", "textarea", "select"}:
-        raise ValueError("No forms or input fields in email (G2)")
-    body = f"{subject}\n{html}".lower()
-    for p in _CRED_ASK:
-        if p in body:
-            raise ValueError(f"Email asks the recipient for credentials: {p!r} (G2)")
-    for url in scan.urls:
-        low = url.strip().lower()
-        if low.startswith(("mailto:", "tel:", "cid:", "#")):
-            continue
-        if not low.startswith("https://"):
-            raise ValueError(f"Email links/assets must be absolute https: {url!r} (G3)")
-        host = urlparse(low).hostname or ""
-        if not _host_ok(host) or urlparse(low).username is not None:
-            raise ValueError(f"Shortened, numeric-host or credential-bearing URL: {url!r} (G3)")
-    for href, text in scan.anchors:
-        real = urlparse(href.strip().lower()).hostname or ""
-        if not real:
-            continue
-        for m in _HOSTISH.finditer(text):
-            if not _same_site(m.group(1).lower(), real):
-                raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r} (G3)")
-
-
-async def send_email(*, to: str, subject: str, html: str) -> str:
-    if not SMTP_PASSWORD:
-        logger.error("SMTP_PASSWORD is missing")
-        raise HTTPException(status_code=500, detail="خدمة البريد غير مهيأة على الخادم")
-
-    _assert_safe_email(subject, html)
-
-    def _send():
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"{EMAIL_FROM_NAME} <{SMTP_USER}>"
-        msg["To"] = to
-
-        plain_text = (
-            "رمز تأكيد حسابك في AuraX\n\n"
-            "افتح الرسالة لعرض رمز التفعيل.\n"
-            "الرمز صالح لمدة 15 دقيقة."
-        )
-        msg.attach(MIMEText(plain_text, "plain", "utf-8"))
-        msg.attach(MIMEText(html, "html", "utf-8"))
-
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_USER, [to], msg.as_string())
-
+async def supabase_current_user(access_token: str) -> Optional[dict]:
+    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
+        return None
     try:
-        await asyncio.to_thread(_send)
-        logger.info("Verification email sent successfully to %s", to)
-        return "sent"
-    except smtplib.SMTPAuthenticationError:
-        logger.exception("Gmail authentication failed")
-        raise HTTPException(
-            status_code=502,
-            detail="فشل تسجيل الدخول إلى حساب البريد. تحقق من Google App Password."
-        )
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(
+                f"{SUPABASE_URL}/auth/v1/user",
+                headers={
+                    "apikey": SUPABASE_PUBLISHABLE_KEY,
+                    "Authorization": f"Bearer {access_token}",
+                },
+            )
+        if r.status_code != 200:
+            return None
+        return r.json()
     except Exception:
-        logger.exception("Failed to send email")
-        raise HTTPException(
-            status_code=502,
-            detail="تعذر إرسال رسالة التفعيل إلى البريد الإلكتروني."
-        )
-
-
-def verification_email_html(code: str) -> str:
-    return (
-        f'<table role="presentation" width="100%" style="background:#0B0E14;padding:32px 0">'
-        f'<tr><td align="center">'
-        f'<table role="presentation" width="480" style="background:#121721;border-radius:16px;'
-        f'font-family:Arial,Helvetica,sans-serif;overflow:hidden">'
-        f'<tr><td style="padding:28px 32px;background:#0f1420;border-bottom:1px solid #1E293B">'
-        f'<span style="color:#00E5FF;font-size:26px;font-weight:800;letter-spacing:1px">AuraX</span></td></tr>'
-        f'<tr><td style="padding:32px">'
-        f'<h2 style="color:#F8FAFC;margin:0 0 12px;font-size:20px">رمز تأكيد حسابك</h2>'
-        f'<p style="color:#94A3B8;font-size:14px;line-height:1.7;margin:0 0 24px">'
-        f'استخدم الرمز التالي لتفعيل حسابك على منصة AuraX. الرمز صالح لمدة 15 دقيقة.</p>'
-        f'<div style="text-align:center;margin:0 0 24px">'
-        f'<span style="display:inline-block;background:#0B0E14;border:1px solid #00E5FF;'
-        f'color:#00E5FF;font-size:34px;font-weight:800;letter-spacing:10px;padding:16px 28px;'
-        f'border-radius:12px">{escape(code)}</span></div>'
-        f'<p style="color:#64748B;font-size:12px;line-height:1.6;margin:0">'
-        f'إذا لم تطلب هذا الرمز، تجاهل هذه الرسالة. لن نطلب منك كلمة المرور أو أي بيانات حساسة عبر البريد.</p>'
-        f'</td></tr>'
-        f'<tr><td style="padding:18px 32px;background:#0f1420;border-top:1px solid #1E293B">'
-        f'<span style="color:#64748B;font-size:11px">تم الإرسال بواسطة AuraX</span></td></tr>'
-        f'</table></td></tr></table>'
-    )
+        return None
 
 
 # ================================================================== AUTH HELPERS
@@ -364,6 +262,7 @@ async def _user_from_token(token: str) -> Optional[dict]:
                 return u
     except jwt.InvalidTokenError:
         pass
+
     sess = await db_fetchrow("SELECT * FROM user_sessions WHERE session_token = $1", token)
     if sess:
         exp = sess.get("expires_at")
@@ -373,6 +272,11 @@ async def _user_from_token(token: str) -> Optional[dict]:
             exp = exp.replace(tzinfo=timezone.utc)
         if not exp or exp > datetime.now(timezone.utc):
             return await get_user_by_id(sess["user_id"])
+
+    su = await supabase_current_user(token)
+    email = (su or {}).get("email")
+    if email:
+        return await get_user_by_email(email.lower())
     return None
 
 
@@ -553,6 +457,7 @@ async def fetch_markets() -> List[dict]:
             data = r.json()
             _CACHE["markets"] = {"ts": now, "data": data}
             return data
+        logger.warning(f"CoinGecko markets status {r.status_code}, using fallback/cache")
     except Exception as e:
         logger.warning(f"CoinGecko markets error {e}")
     if cached:
@@ -611,54 +516,70 @@ async def fetch_ohlc(coin_id: str, days: int) -> List[list]:
 
 
 # ================================================================== AUTH ROUTES
-def gen_code() -> str:
-    return f"{secrets.randbelow(1_000_000):06d}"
-
-
 @api_router.post("/auth/register")
 async def register(body: RegisterIn):
     email = body.email.lower()
     existing = await get_user_by_email(email)
     if existing and existing.get("is_verified"):
         raise HTTPException(status_code=400, detail="البريد الإلكتروني مسجّل بالفعل")
+
+    data = await supabase_auth_request(
+        "POST",
+        "/signup",
+        {
+            "email": email,
+            "password": body.password,
+            "data": {"name": body.name},
+        },
+    )
+    su = data.get("user") or {}
+    supabase_user_id = su.get("id")
+
     if not existing:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         await db_execute(
             "INSERT INTO users (user_id, email, name, password_hash, role, is_verified, frozen, "
             "balances, auth_provider, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-            user_id, email, body.name, hash_password(body.password), "user", False, False,
-            {}, "password", datetime.now(timezone.utc).isoformat())
+            user_id, email, body.name, None, "user", bool(su.get("email_confirmed_at")), False,
+            {}, "supabase", datetime.now(timezone.utc).isoformat())
     else:
-        await update_user_fields(existing["user_id"],
-                                 {"name": body.name, "password_hash": hash_password(body.password)})
-    code = gen_code()
-    await db_execute("DELETE FROM verification_codes WHERE email = $1", email)
-    await db_execute("INSERT INTO verification_codes (email, code, expires_at) VALUES ($1,$2,$3)",
-                     email, code, (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat())
-    await send_email(to=email, subject="رمز تأكيد حسابك في AuraX",
-                     html=verification_email_html(code))
-    return {"status": "code_sent", "email": email}
+        await update_user_fields(
+            existing["user_id"],
+            {"name": body.name, "password_hash": None, "auth_provider": "supabase",
+             "is_verified": bool(su.get("email_confirmed_at"))},
+        )
+
+    if data.get("session"):
+        u = await get_user_by_email(email)
+        if u:
+            await update_user_fields(u["user_id"], {"is_verified": True})
+            return {
+                "status": "authenticated",
+                "token": data["session"].get("access_token"),
+                "user": public_user(await get_user_by_email(email)),
+            }
+
+    return {"status": "code_sent", "email": email, "supabase_user_id": supabase_user_id}
 
 
 @api_router.post("/auth/verify")
 async def verify(body: VerifyIn):
     email = body.email.lower()
-    rec = await db_fetchrow("SELECT * FROM verification_codes WHERE email = $1 "
-                            "ORDER BY expires_at DESC LIMIT 1", email)
-    if not rec:
-        raise HTTPException(status_code=400, detail="لا يوجد رمز، أعد الإرسال")
-    exp = datetime.fromisoformat(rec["expires_at"])
-    if exp.tzinfo is None:
-        exp = exp.replace(tzinfo=timezone.utc)
-    if exp < datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="انتهت صلاحية الرمز")
-    if rec["code"] != body.code.strip():
-        raise HTTPException(status_code=400, detail="رمز غير صحيح")
-    u0 = await get_user_by_email(email)
-    await update_user_fields(u0["user_id"], {"is_verified": True})
-    await db_execute("DELETE FROM verification_codes WHERE email = $1", email)
+    data = await supabase_auth_request(
+        "POST",
+        "/verify",
+        {"type": "email", "token": body.code.strip(), "email": email},
+    )
     u = await get_user_by_email(email)
-    token = create_access_token(u["user_id"], u["email"])
+    if not u:
+        raise HTTPException(status_code=404, detail="الحساب المحلي غير موجود")
+
+    await update_user_fields(u["user_id"], {"is_verified": True, "auth_provider": "supabase", "password_hash": None})
+    u = await get_user_by_email(email)
+
+    token = (data.get("session") or {}).get("access_token")
+    if not token:
+        token = create_access_token(u["user_id"], u["email"])
     return {"token": token, "user": public_user(u)}
 
 
@@ -668,12 +589,7 @@ async def resend_code(body: ResendIn):
     u = await get_user_by_email(email)
     if not u:
         raise HTTPException(status_code=404, detail="الحساب غير موجود")
-    code = gen_code()
-    await db_execute("DELETE FROM verification_codes WHERE email = $1", email)
-    await db_execute("INSERT INTO verification_codes (email, code, expires_at) VALUES ($1,$2,$3)",
-                     email, code, (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat())
-    await send_email(to=email, subject="رمز تأكيد حسابك في AuraX",
-                     html=verification_email_html(code))
+    await supabase_auth_request("POST", "/resend", {"type": "signup", "email": email})
     return {"status": "code_sent"}
 
 
@@ -681,13 +597,44 @@ async def resend_code(body: ResendIn):
 async def login(body: LoginIn):
     email = body.email.lower()
     u = await get_user_by_email(email)
-    if not u or not u.get("password_hash") or not verify_password(body.password, u["password_hash"]):
-        raise HTTPException(status_code=401, detail="بيانات الدخول غير صحيحة")
-    if not u.get("is_verified"):
+
+    if u and u.get("role") == "admin":
+        if not u.get("password_hash") or not verify_password(body.password, u["password_hash"]):
+            raise HTTPException(status_code=401, detail="بيانات الدخول غير صحيحة")
+        if u.get("frozen"):
+            raise HTTPException(status_code=403, detail="تم تجميد الحساب، تواصل مع الدعم")
+        token = create_access_token(u["user_id"], u["email"])
+        return {"token": token, "user": public_user(u)}
+
+    data = await supabase_auth_request(
+        "POST",
+        "/token?grant_type=password",
+        {"email": email, "password": body.password},
+    )
+    session = data.get("session") or data
+    token = session.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="تعذر إنشاء جلسة الدخول")
+
+    su = await supabase_current_user(token)
+    confirmed = bool((su or {}).get("email_confirmed_at"))
+    if not confirmed:
         raise HTTPException(status_code=403, detail="الحساب غير مفعّل، فعّل بريدك أولاً")
-    if u.get("frozen"):
-        raise HTTPException(status_code=403, detail="تم تجميد الحساب، تواصل مع الدعم")
-    token = create_access_token(u["user_id"], u["email"])
+
+    if not u:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        await db_execute(
+            "INSERT INTO users (user_id, email, name, password_hash, role, is_verified, frozen, "
+            "balances, auth_provider, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+            user_id, email, ((su or {}).get("user_metadata") or {}).get("name", ""), None,
+            "user", True, False, {}, "supabase", datetime.now(timezone.utc).isoformat())
+        u = await get_user_by_email(email)
+    else:
+        if u.get("frozen"):
+            raise HTTPException(status_code=403, detail="تم تجميد الحساب، تواصل مع الدعم")
+        await update_user_fields(u["user_id"], {"is_verified": True, "auth_provider": "supabase", "password_hash": None})
+        u = await get_user_by_email(email)
+
     return {"token": token, "user": public_user(u)}
 
 
@@ -1276,7 +1223,6 @@ async def startup():
     
     except Exception as e:
         print(f"Startup bypassed network error gracefully: {e}")
-
 
 
 @app.on_event("shutdown")

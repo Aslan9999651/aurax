@@ -124,7 +124,7 @@ export default function Home() {
             <h2 className="font-heading text-2xl lg:text-4xl font-extrabold">مرحباً بك مجدداً في منصة AuraX</h2>
             <p className="text-[var(--ax-text2)] mt-3">حسابك جاهز، يمكنك الانتقال المباشر لأسواق التداول أو إدارة محفظتك.</p>
             <div className="flex justify-center gap-3 mt-6">
-              <Link to="/spot" className="inline-flex items-center gap-2 px-7 py-3 rounded-xl font-semibold btn-cyan">التداول الفوري <ArrowLeft size=18 /></Link>
+              <Link to="/spot" className="inline-flex items-center gap-2 px-7 py-3 rounded-xl font-semibold btn-cyan">التداول الفوري <ArrowLeft size={18} /></Link>
               <Link to="/wallet" className="inline-flex items-center gap-2 px-7 py-3 rounded-xl font-semibold bg-[var(--ax-s2)]">المحفظة</Link>
             </div>
           </div>

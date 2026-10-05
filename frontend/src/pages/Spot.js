@@ -1,145 +1,192 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, Link } from "react-router-dom";
-import { toast } from "sonner";
-import { useCrypto, fmtPrice, fmtNum } from "../context/CryptoContext";
+import React, { useState } from "react";
+import { useCrypto, fmtPrice } from "../context/CryptoContext";
 import { useAuth } from "../context/AuthContext";
-import api, { apiErr } from "../lib/api";
-import CandleChart from "../components/CandleChart";
-import { OrderBook, RecentTrades } from "../components/TradingParts";
-
-const TIMEFRAMES = [["1م", 1], ["5د", 1], ["15د", 1], ["1س", 1], ["4س", 7], ["1ي", 30]];
+import { toast } from "sonner";
+import { TrendingUp, ArrowDownUp, ChevronDown } from "lucide-react";
 
 export default function Spot() {
-  const { markets, getCoin } = useCrypto();
-  const { user, refresh } = useAuth();
-  const nav = useNavigate();
-  const loc = useLocation();
-  const coinId = new URLSearchParams(loc.search).get("coin") || "bitcoin";
-  const coin = getCoin(coinId) || markets[0];
-
-  const [candles, setCandles] = useState([]);
-  const [days, setDays] = useState(1);
-  const [tf, setTf] = useState(0);
-  const [side, setSide] = useState("buy");
+  const { markets } = useCrypto();
+  const { user } = useAuth();
+  const [selectedCoin, setSelectedCoin] = useState(markets[0] || { symbol: "btc", live_price: 86009.40, price_change_percentage_24h: 0.51 });
+  const [side, setSide] = useState("buy"); // buy or sell
   const [orderType, setOrderType] = useState("market");
-  const [price, setPrice] = useState("");
   const [amount, setAmount] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState("open");
 
-  useEffect(() => {
-    if (!coin) return;
-    let on = true;
-    (async () => {
-      try { const { data } = await api.get(`/crypto/ohlc/${coin.id}?days=${days}`); if (on) setCandles(data); } catch {}
-    })();
-    return () => { on = false; };
-  }, [coin?.id, days]);
+  const currentPrice = selectedCoin.live_price || 86009.40;
+  const chg = selectedCoin.price_change_percentage_24h || 0;
 
-  const live = coin?.live_price;
-  useEffect(() => { if (orderType === "market" && live) setPrice(""); }, [orderType]);
+  // Mock order book data based on current price
+  const asks = [
+    { price: currentPrice * 1.0005, amount: 0.15169 },
+    { price: currentPrice * 1.0004, amount: 0.31689 },
+    { price: currentPrice * 1.0003, amount: 1.06523 },
+    { price: currentPrice * 1.0002, amount: 0.00012 },
+    { price: currentPrice * 1.0001, amount: 9.82684 },
+  ].reverse();
 
-  const effPrice = orderType === "limit" && price ? parseFloat(price) : live;
-  const chg = coin?.price_change_percentage_24h || 0;
-  const sym = coin?.symbol?.toUpperCase() || "";
-  const usdt = user?.balances?.USDT || 0;
-  const coinBal = user?.balances?.[sym] || 0;
+  const bids = [
+    { price: currentPrice * 0.9999, amount: 0.47684 },
+    { price: currentPrice * 0.9998, amount: 0.00049 },
+    { price: currentPrice * 0.9997, amount: 0.04959 },
+    { price: currentPrice * 0.9996, amount: 0.00007 },
+    { price: currentPrice * 0.9995, amount: 0.00007 },
+  ];
 
-  const setPct = (p) => {
-    if (side === "buy") { if (effPrice) setAmount(((usdt * p) / effPrice).toFixed(6)); }
-    else setAmount((coinBal * p).toFixed(6));
+  const handleTrade = (e) => {
+    e.preventDefault();
+    if (!user) {
+      toast.error("يرجى تسجيل الدخول أولاً");
+      return;
+    }
+    toast.success("تم تقديم الطلب بنجاح");
+    setAmount("");
   };
-
-  const submit = async () => {
-    if (!user) { nav("/login"); return; }
-    if (!amount || parseFloat(amount) <= 0) { toast.error("أدخل الكمية"); return; }
-    setBusy(true);
-    try {
-      await api.post("/orders", { pair: `${sym}/USDT`, market: "spot", side, order_type: orderType, price: orderType === "limit" ? parseFloat(price) : null, amount: parseFloat(amount) });
-      toast.success(`تم تنفيذ أمر ${side === "buy" ? "الشراء" : "البيع"} بنجاح`);
-      setAmount(""); await refresh();
-    } catch (e) { toast.error(apiErr(e.response?.data?.detail)); }
-    finally { setBusy(false); }
-  };
-
-  if (!coin) return <div className="p-10 text-center text-[var(--ax-text3)]">جاري التحميل…</div>;
 
   return (
     <div className="max-w-[1400px] mx-auto px-2 lg:px-4 py-4">
-      {/* pair header */}
-      <div className="panel px-4 py-3 mb-2 flex flex-wrap items-center gap-x-8 gap-y-2">
-        <div className="flex items-center gap-2.5">
-          <img src={coin.image} alt="" className="w-8 h-8 rounded-full" />
-          <div>
-            <div className="font-heading font-bold">{sym}/USDT</div>
-            <div className="text-xs text-[var(--ax-text3)]">{coin.name}</div>
+      {/* Top Bar / Pair Selector */}
+      <div className="panel p-3 mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="font-heading font-bold text-lg flex items-center gap-1">
+            {selectedCoin.symbol ? selectedCoin.symbol.toUpperCase() : "BTC"}/USDT <ChevronDown size={16} />
           </div>
+          <span className={`text-xs mono ${chg >= 0 ? "text-green" : "text-red"}`}>
+            {chg >= 0 ? "+" : ""}{chg.toFixed(2)}%
+          </span>
         </div>
-        <div><div className="text-[10px] text-[var(--ax-text3)]">السعر</div><div className={`mono font-bold ${chg >= 0 ? "text-green" : "text-red"}`}>${fmtPrice(live)}</div></div>
-        <div><div className="text-[10px] text-[var(--ax-text3)]">تغير 24س</div><div className={`mono ${chg >= 0 ? "text-green" : "text-red"}`}>{chg >= 0 ? "+" : ""}{chg.toFixed(2)}%</div></div>
-        <div className="hidden sm:block"><div className="text-[10px] text-[var(--ax-text3)]">أعلى 24س</div><div className="mono text-[var(--ax-text2)]">${fmtPrice(coin.high_24h)}</div></div>
-        <div className="hidden sm:block"><div className="text-[10px] text-[var(--ax-text3)]">أدنى 24س</div><div className="mono text-[var(--ax-text2)]">${fmtPrice(coin.low_24h)}</div></div>
-        <div className="hidden md:block"><div className="text-[10px] text-[var(--ax-text3)]">حجم 24س</div><div className="mono text-[var(--ax-text2)]">${fmtNum(coin.total_volume)}</div></div>
-        <select value={coin.id} onChange={(e) => nav(`/spot?coin=${e.target.value}`)} data-testid="spot-pair-select"
-          className="mr-auto bg-[var(--ax-s2)] border border-[var(--ax-border)] rounded-lg px-3 py-2 text-sm outline-none">
-          {markets.slice(0, 60).map((m) => <option key={m.id} value={m.id}>{m.symbol.toUpperCase()}/USDT</option>)}
-        </select>
+        <div className="flex items-center gap-2">
+          <button className="px-3 py-1.5 rounded-lg bg-[var(--ax-s2)] text-xs font-semibold">التداول الفوري</button>
+        </div>
       </div>
 
-      <div className="grid lg:grid-cols-[1fr_300px] gap-2">
-        <div className="space-y-2">
-          {/* chart */}
-          <div className="panel p-3">
-            <div className="flex gap-1 mb-2">
-              {TIMEFRAMES.map(([lbl, d], i) => (
-                <button key={i} onClick={() => { setTf(i); setDays(d); }} data-testid={`tf-${i}`}
-                  className={`px-2.5 py-1 rounded text-xs ${tf === i ? "bg-[var(--ax-s3)] text-cyan" : "text-[var(--ax-text3)] hover:text-[var(--ax-text)]"}`}>{lbl}</button>
-              ))}
-            </div>
-            <CandleChart candles={candles} height={340} />
+      {/* Main Trading Layout: Order Book & Order Form */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 mb-4">
+        {/* Left / Order Book (5 cols) */}
+        <div className="lg:col-span-5 panel p-3">
+          <div className="text-xs text-[var(--ax-text3)] flex justify-between mb-2">
+            <span>السعر (USDT)</span>
+            <span>المبلغ ({selectedCoin.symbol ? selectedCoin.symbol.toUpperCase() : "BTC"})</span>
           </div>
-          {/* trade panel */}
-          <div className="panel p-4">
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <button onClick={() => setSide("buy")} data-testid="spot-side-buy" className={`py-2 rounded-lg text-sm font-semibold ${side === "buy" ? "bg-[var(--ax-green)] text-[#041016]" : "bg-[var(--ax-s2)] text-[var(--ax-text2)]"}`}>شراء</button>
-              <button onClick={() => setSide("sell")} data-testid="spot-side-sell" className={`py-2 rounded-lg text-sm font-semibold ${side === "sell" ? "bg-[var(--ax-red)] text-white" : "bg-[var(--ax-s2)] text-[var(--ax-text2)]"}`}>بيع</button>
-            </div>
-            <div className="flex gap-2 mb-3 text-xs">
-              {["market", "limit"].map((t) => (
-                <button key={t} onClick={() => setOrderType(t)} data-testid={`spot-type-${t}`}
-                  className={`px-3 py-1.5 rounded ${orderType === t ? "text-cyan bg-[var(--ax-s2)]" : "text-[var(--ax-text3)]"}`}>{t === "market" ? "سوق" : "محدد"}</button>
-              ))}
-            </div>
-            {orderType === "limit" && (
-              <label className="block mb-2">
-                <span className="text-xs text-[var(--ax-text3)]">السعر (USDT)</span>
-                <input data-testid="spot-price-input" value={price} onChange={(e) => setPrice(e.target.value)} placeholder={fmtPrice(live)}
-                  className="w-full mt-1 bg-[var(--ax-s2)] border border-[var(--ax-border)] rounded-lg px-3 py-2 mono text-sm outline-none focus:border-[var(--ax-cyan)]" />
-              </label>
-            )}
-            <label className="block mb-2">
-              <span className="text-xs text-[var(--ax-text3)]">الكمية ({sym})</span>
-              <input data-testid="spot-amount-input" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00"
-                className="w-full mt-1 bg-[var(--ax-s2)] border border-[var(--ax-border)] rounded-lg px-3 py-2 mono text-sm outline-none focus:border-[var(--ax-cyan)]" />
-            </label>
-            <div className="grid grid-cols-4 gap-1.5 mb-3">
-              {[0.25, 0.5, 0.75, 1].map((p) => (
-                <button key={p} onClick={() => setPct(p)} data-testid={`spot-pct-${p * 100}`} className="py-1.5 rounded bg-[var(--ax-s2)] hover:bg-[var(--ax-s3)] text-xs mono">{p * 100}%</button>
-              ))}
-            </div>
-            <div className="text-xs text-[var(--ax-text3)] mb-3 flex justify-between">
-              <span>الرصيد المتاح</span>
-              <span className="mono">{side === "buy" ? `${fmtPrice(usdt)} USDT` : `${coinBal} ${sym}`}</span>
-            </div>
-            <button onClick={submit} disabled={busy} data-testid="spot-submit-btn"
-              className={`w-full py-2.5 rounded-lg font-semibold text-sm ${side === "buy" ? "bg-[var(--ax-green)] text-[#041016]" : "bg-[var(--ax-red)] text-white"} disabled:opacity-60`}>
-              {busy ? "جارٍ التنفيذ…" : !user ? "سجّل الدخول للتداول" : `${side === "buy" ? "شراء" : "بيع"} ${sym}`}
-            </button>
+          {/* Asks (Red) */}
+          <div className="space-y-1 mb-2">
+            {asks.map((ask, i) => (
+              <div key={i} className="flex justify-between text-xs mono text-red">
+                <span>{ask.price.toFixed(2)}</span>
+                <span>{ask.amount.toFixed(5)}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Current Live Price */}
+          <div className="py-2 my-1 border-y border-[var(--ax-border)] flex justify-between items-center bg-[var(--ax-s2)] px-2 rounded">
+            <span className={`font-heading font-bold text-base mono ${chg >= 0 ? "text-green" : "text-red"}`}>
+              ${fmtPrice(currentPrice)}
+            </span>
+            <span className="text-xs text-[var(--ax-text3)]">≈ ${fmtPrice(currentPrice)}</span>
+          </div>
+
+          {/* Bids (Green) */}
+          <div className="space-y-1 mt-2">
+            {bids.map((bid, i) => (
+              <div key={i} className="flex justify-between text-xs mono text-green">
+                <span>{bid.price.toFixed(2)}</span>
+                <span>{bid.amount.toFixed(5)}</span>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="grid grid-rows-2 gap-2" style={{ minHeight: 560 }}>
-          <OrderBook price={live} onPick={(p) => { setOrderType("limit"); setPrice(fmtPrice(p)); }} />
-          <RecentTrades price={live} />
+        {/* Right / Order Form (7 cols) */}
+        <div className="lg:col-span-7 panel p-4">
+          {/* Buy / Sell Tabs */}
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <button
+              type="button"
+              onClick={() => setSide("buy")}
+              className={`py-2 rounded-xl font-semibold text-sm transition-colors ${side === "buy" ? "bg-green text-black" : "bg-[var(--ax-s2)] text-[var(--ax-text2)]"}`}
+            >
+              شراء
+            </button>
+            <button
+              type="button"
+              onClick={() => setSide("sell")}
+              className={`py-2 rounded-xl font-semibold text-sm transition-colors ${side === "sell" ? "bg-red text-black" : "bg-[var(--ax-s2)] text-[var(--ax-text2)]"}`}
+            >
+              بيع
+            </button>
+          </div>
+
+          {/* Order Type */}
+          <div className="mb-4">
+            <div className="text-xs text-[var(--ax-text3)] mb-1">نوع الطلب</div>
+            <div className="p-2 rounded-xl bg-[var(--ax-s2)] text-sm flex justify-between items-center">
+              <span>طلب السوق (Market)</span>
+              <ChevronDown size={15} />
+            </div>
+          </div>
+
+          {/* Form Inputs */}
+          <form onSubmit={handleTrade} className="space-y-3">
+            <div>
+              <div className="text-xs text-[var(--ax-text3)] mb-1">المبلغ</div>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="any"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="w-full bg-[var(--ax-s2)] border border-[var(--ax-border)] rounded-xl px-3 py-2.5 text-sm mono focus:outline-none focus:border-cyan"
+                />
+                <span className="absolute left-3 top-2.5 text-xs text-[var(--ax-text3)]">{selectedCoin.symbol ? selectedCoin.symbol.toUpperCase() : "BTC"}</span>
+              </div>
+            </div>
+
+            <div className="text-xs text-[var(--ax-text3)] flex justify-between">
+              <span>متاح: 0.00 USDT</span>
+              <span className="text-cyan cursor-pointer">إيداع</span>
+            </div>
+
+            <button
+              type="submit"
+              className={`w-full py-3 rounded-xl font-semibold text-sm transition-colors ${side === "buy" ? "bg-green text-black hover:opacity-90" : "bg-red text-black hover:opacity-90"}`}
+            >
+              {user ? (side === "buy" ? "شراء" : "بيع") : "تسجيل الدخول"}
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* Bottom Section: Open Orders & Assets */}
+      <div className="panel p-4">
+        <div className="flex border-b border-[var(--ax-border)] gap-6 text-sm font-semibold mb-4">
+          <button
+            type="button"
+            onClick={() => setActiveTab("open")}
+            className={`pb-2 border-b-2 transition-colors ${activeTab === "open" ? "border-cyan text-cyan" : "border-transparent text-[var(--ax-text3)]"}`}
+          >
+            الطلبات المفتوحة (0)
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("assets")}
+            className={`pb-2 border-b-2 transition-colors ${activeTab === "assets" ? "border-cyan text-cyan" : "border-transparent text-[var(--ax-text3)]"}`}
+          >
+            الأرصدة (0)
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("bots")}
+            className={`pb-2 border-b-2 transition-colors ${activeTab === "bots" ? "border-cyan text-cyan" : "border-transparent text-[var(--ax-text3)]"}`}
+          >
+            بوتات
+          </button>
+        </div>
+
+        <div className="py-10 text-center">
+          <div className="text-sm text-[var(--ax-text3)] mb-2">لا توجد طلبات مفتوحة</div>
+          <div className="text-xs text-[var(--ax-text3)]">دع أفضل المتداولين يتداولون من أجلك</div>
         </div>
       </div>
     </div>

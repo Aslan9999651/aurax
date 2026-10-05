@@ -114,7 +114,59 @@ SIM_SAMPLES = [
     {"ntype": "market", "message": "ارتفاع حاد في حجم التداول على BTC/USDT"},
     {"ntype": "deposit", "message": "إيداع 0.45 BTC تم تأكيده بنجاح"},
     {"ntype": "market", "message": "إدراج جديد متاح الآن على منصة AuraX"},
-]
+    {"ntype": "system", "message": "مرحباً بك في منصة AuraX للتداول الرقمي."},
+    {"ntype": "deposit", "message": "إيداع ناجح بقيمة 10,000 USDT عبر شبكة TRC20."},
+    {"ntype": "market", "message": "إدراج جديد: تم إضافة زوج تداول SOL/USDT."},
+    {"ntype": "withdraw", "message": "تمت الموافقة على سحب 5,500 USDT عبر شبكة BEP20."},
+    {"ntype": "deposit", "message": "قام مستخدم بإيداع 0.5 BTC في المحفظة الفورية."},
+    {"ntype": "market", "message": "ارتفاع قوي في حجم التداول على العقود الآجلة لزوج ETH/USDT."},
+    {"ntype": "system", "message": "تم ترقية محرك مطابقة الصفقات في AuraX بنجاح."},
+    {"ntype": "deposit", "message": "تأكيد إيداع 50,000 USDT في حساب التداول."},
+    {"ntype": "withdraw", "message": "طلب سحب 2.1 ETH قيد المعالجة الآن."},
+    {"ntype": "market", "message": "تقلبات عالية في أسعار السوق، يرجى تفعيل أوامر وقف الخسارة."},
+    {"ntype": "deposit", "message": "اكتمل إيداع 3,200 USDC بنجاح."},
+    {"ntype": "market", "message": "تجاوز البيتكوين حاجز المقاومة الأسبوعي."},
+    {"ntype": "system", "message": "خوادم AuraX تعمل الآن بكفاءة عالية 100%."},
+    {"ntype": "deposit", "message": "تم شحن حسابك بمبلغ 15,000 USDT."},
+    {"ntype": "market", "message": "أزواج تداول جديدة متاحة الآن في سوق Spot."},
+    {"ntype": "withdraw", "message": "تم تنفيذ سحب 12,000 USDT بنجاح."},
+    {"ntype": "deposit", "message": "إيداع 100 SOL عبر شبكة Solana الرئيسية."},
+    {"ntype": "market", "message": "انخفاض في رسوم تمويل العقود الآجلة (Funding Rate)."},
+    {"ntype": "system", "message": "تذكير: يرجى إكمال توثيق الحساب لرفع حدود السحب."},
+    {"ntype": "deposit", "message": "اكتمل إيداع 25,000 USDT بنجاح."},
+    {"ntype": "market", "message": "سيولة عالية تتدفق الآن لزوج BNB/USDT."},
+    {"ntype": "withdraw", "message": "سحب 0.25 BTC تم إرساله لشبكة البلوكتشين."},
+    {"ntype": "deposit", "message": "إيداع جديد بقيمة 8,500 USDT عبر ERC20."},
+    {"ntype": "market", "message": "تحديث بيانات السوق المباشرة يعمل بشكل ممتاز."},
+    {"ntype": "system", "message": "تم تفعيل ميزة التداول بنقرة واحدة."},
+    {"ntype": "deposit", "message": "استلام إيداع بقيمة 100,000 USDT في منصة AuraX."},
+    {"ntype": "withdraw", "message": "معالجة سحب 4,000 USDT عبر شبكة Polygon."},
+    {"ntype": "market", "message": "ارتفاع نسبة الهيمنة للبيتكوين في السوق اليوم."},
+    {"ntype": "deposit", "message": "تم تأكيد إيداع 500 AVAX."},
+    {"ntype": "system", "message": "حماية الحسابات مفعّلة بأحدث أنظمة الأمان المتطورة."},
+    {"ntype": "withdraw", "message": "سحب 10 ETH اكتمل بنجاح."},
+    {"ntype": "deposit", "message": "إيداع بقيمة 7,700 USDT متاح الآن في رصيدك."},
+    {"ntype": "market", "message": "إدراج زوج تداول PEPE/USDT في المنصة."},
+    {"ntype": "deposit", "message": "تم استلام إيداع بقيمة 1.5 BTC."},
+    {"ntype": "withdraw", "message": "معالجة طلب سحب 20,000 USDT قيد التنفيذ."},
+    {"ntype": "market", "message": "انطلاق مسابقة التداول الأسبوعية على AuraX."},
+    {"ntype": "system", "message": "تم إضافة خيارات دفع وسحب جديدة."},
+    {"ntype": "deposit", "message": "إيداع ناجح بقيمة 45,000 USDT."},
+    {"ntype": "market", "message": "سوق العملات البديلة يشهد انتعاشاً ملحوظاً."},
+    {"ntype": "withdraw", "message": "تمت الموافقة على سحب 3,500 USDT."},
+    {"ntype": "deposit", "message": "تأكيد إيداع 2,000 LINK."},
+    {"ntype": "market", "message": "زيادة ملحوظة في صفقات الشراء على زوج ADA/USDT."},
+    {"ntype": "system", "message": "شكراً لاختيارك AuraX كمنصتك المفضلة للتداول."},
+    {"ntype": "deposit", "message": "إيداع 33,000 USDT عبر شبكة TRC20."},
+    {"ntype": "withdraw", "message": "اكتمال سحب 8,800 USDT بنجاح."},
+    {"ntype": "market", "message": "تحركات سريعة في سوق الكريبتو، راقب صفقاتك المفتوحة."},
+    {"ntype": "deposit", "message": "استلام 120 BNB في محفظتك."},
+    {"ntype": "system", "message": "صيانة مجدولة للنظام انتهت بنجاح وبدون توقف."},
+    {"ntype": "deposit", "message": "إيداع استثماري بقيمة 250,000 USDT تم تأكيده."},
+    {"ntype": "market", "message": "سيولة إضافية تمت إضافتها لسوق العقود الآجلة."},
+    {"ntype": "withdraw", "message": "طلب سحب 50,000 USDT قيد المراجعة الأمنية."},
+    {"ntype": "deposit", "message": "اكتمل إيداع 9,200 USDT بنجاح."}
+            ]
 
 
 async def sim_events():
@@ -323,9 +375,8 @@ class LoginIn(BaseModel):
 
 
 class GoogleSessionIn(BaseModel):
-    session_id: str
-
-
+    session_token: str # Changed to receive directly the token from frontend
+    
 class OrderIn(BaseModel):
     pair: str
     market: str = "spot"
@@ -565,10 +616,11 @@ async def register(body: RegisterIn):
 @api_router.post("/auth/verify")
 async def verify(body: VerifyIn):
     email = body.email.lower()
+    # إضافة "type": "signup" المفقودة لحل مشكلة Invalid Token
     data = await supabase_auth_request(
         "POST",
         "/verify",
-        {"type": "email", "token": body.code.strip(), "email": email},
+        {"type": "signup", "token": body.code.strip(), "email": email}, 
     )
     u = await get_user_by_email(email)
     if not u:
@@ -640,32 +692,40 @@ async def login(body: LoginIn):
 
 @api_router.post("/auth/google/session")
 async def google_session(body: GoogleSessionIn):
-    try:
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.get("https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-                            headers={"X-Session-ID": body.session_id})
-        r.raise_for_status()
-        data = r.json()
-    except Exception:
+    # تم إلغاء الاعتماد على EmergentAgent نهائياً والاعتماد على Supabase
+    su = await supabase_current_user(body.session_token)
+    if not su:
         raise HTTPException(status_code=401, detail="فشل تسجيل الدخول عبر Google")
-    email = data["email"].lower()
+        
+    email = su.get("email", "").lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="البريد الإلكتروني غير متوفر")
+        
     u = await get_user_by_email(email)
+    meta = su.get("user_metadata", {})
+    
     if not u:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         await db_execute(
             "INSERT INTO users (user_id, email, name, picture, role, is_verified, frozen, "
             "balances, auth_provider, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-            user_id, email, data.get("name", ""), data.get("picture"), "user", True, False,
+            user_id, email, meta.get("full_name", meta.get("name", "")), meta.get("avatar_url", ""), "user", True, False,
             {}, "google", datetime.now(timezone.utc).isoformat())
         u = await get_user_by_email(email)
-    session_token = data["session_token"]
+    else:
+        # Update provider if needed
+        if u.get("auth_provider") != "google":
+            await update_user_fields(u["user_id"], {"auth_provider": "google"})
+            
     await db_execute("INSERT INTO user_sessions (user_id, session_token, expires_at) VALUES ($1,$2,$3) "
                      "ON CONFLICT (session_token) DO NOTHING",
-                     u["user_id"], session_token,
+                     u["user_id"], body.session_token,
                      (datetime.now(timezone.utc) + timedelta(days=7)).isoformat())
+                     
     if u.get("frozen"):
         raise HTTPException(status_code=403, detail="تم تجميد الحساب")
-    return {"token": session_token, "user": public_user(u)}
+        
+    return {"token": body.session_token, "user": public_user(u)}
 
 
 @api_router.get("/auth/me")

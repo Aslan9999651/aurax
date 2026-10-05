@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowDownToLine, ArrowUpFromLine, Repeat, Plus, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Repeat, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import api, { apiErr } from "../lib/api";
 import { fmtPrice } from "../context/CryptoContext";
@@ -10,7 +10,7 @@ export default function Wallet() {
   const { user, refresh } = useAuth();
   const [data, setData] = useState(null);
   const [orders, setOrders] = useState([]);
-  const [hideZero, setHideZero] = useState(true);
+  const [hideZero, setHideZero] = useState(false); // تم التعديل لتظهر العملات فوراً
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
@@ -20,13 +20,6 @@ export default function Wallet() {
     } catch {}
   };
   useEffect(() => { load(); }, []);
-
-  const refill = async () => {
-    setBusy(true);
-    try { await api.post("/wallet/demo-refill"); toast.success("تم إضافة 10,000 USDT تجريبي"); await Promise.all([load(), refresh()]); }
-    catch (e) { toast.error(apiErr(e.response?.data?.detail)); }
-    finally { setBusy(false); }
-  };
 
   const assets = (data?.assets || []).filter((a) => !hideZero || a.amount > 0);
 
@@ -44,7 +37,7 @@ export default function Wallet() {
             <Link to="/verification-fees" data-testid="wallet-deposit-btn" className="flex items-center gap-2 px-4 py-2.5 rounded-xl btn-cyan text-sm font-semibold"><ArrowDownToLine size={16} /> إيداع</Link>
             <Link to="/verification-fees" data-testid="wallet-withdraw-btn" className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--ax-s2)] hover:bg-[var(--ax-s3)] text-sm font-semibold"><ArrowUpFromLine size={16} /> سحب</Link>
             <Link to="/spot" className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--ax-s2)] hover:bg-[var(--ax-s3)] text-sm font-semibold"><Repeat size={16} /> تحويل</Link>
-            <button onClick={refill} disabled={busy} data-testid="wallet-demo-refill" className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--ax-s2)] hover:bg-[var(--ax-s3)] text-sm font-semibold disabled:opacity-60"><Plus size={16} /> رصيد تجريبي</button>
+            {/* تم إزالة زر رصيد تجريبي نهائياً */}
           </div>
         </div>
         <div className="panel p-6 flex flex-col justify-center gap-3" style={{ background: "linear-gradient(135deg,rgba(255,184,0,0.06),transparent)" }}>

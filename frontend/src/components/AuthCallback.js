@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
-// REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 export default function AuthCallback() {
   const nav = useNavigate();
   const { applyAuth } = useAuth();
@@ -12,12 +11,16 @@ export default function AuthCallback() {
   useEffect(() => {
     if (done.current) return;
     done.current = true;
+    
+    // Supabase يضع الرمز في الرابط تحت اسم access_token
     const hash = window.location.hash || "";
-    const sid = new URLSearchParams(hash.replace("#", "")).get("session_id");
+    const token = new URLSearchParams(hash.replace("#", "")).get("access_token");
+    
     (async () => {
-      if (!sid) { nav("/login"); return; }
+      if (!token) { nav("/login"); return; }
       try {
-        const { data } = await api.post("/auth/google/session", { session_id: sid });
+        // نرسل الرمز مباشرة للسيرفر الخاص بك الذي جهزناه لفك تشفير بيانات جوجل
+        const { data } = await api.post("/auth/google/session", { session_token: token });
         applyAuth(data);
         window.history.replaceState(null, "", "/wallet");
         nav("/wallet");

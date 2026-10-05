@@ -2,21 +2,35 @@ import React, { useState } from "react";
 import { useCrypto, fmtPrice } from "../context/CryptoContext";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
-import { TrendingUp, ArrowDownUp, ChevronDown } from "lucide-react";
+import { TrendingUp, ArrowDownUp, ChevronDown, X, Search } from "lucide-react";
 
 export default function Spot() {
   const { markets } = useCrypto();
   const { user } = useAuth();
   const [selectedCoin, setSelectedCoin] = useState(markets[0] || { symbol: "btc", live_price: 86009.40, price_change_percentage_24h: 0.51 });
   const [side, setSide] = useState("buy"); // buy or sell
-  const [orderType, setOrderType] = useState("market");
+  const [orderType, setOrderType] = useState("Market"); // Market or Limit
   const [amount, setAmount] = useState("");
+  const [priceInput, setPriceInput] = useState(selectedCoin.live_price || 86009.40);
+  
+  // Modals
+  const [showCoinModal, setShowCoinModal] = useState(false);
+  const [showOrderTypeModal, setShowOrderTypeModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Bottom Tabs & Orders state
   const [activeTab, setActiveTab] = useState("open");
+  const [openOrders, setOpenOrders] = useState([]);
 
   const currentPrice = selectedCoin.live_price || 86009.40;
-  const chg = selectedCoin.price_change_percentage_24h || 0;
+  const chg = selectedCoin.price_change_percentage_24h || 0.51;
 
-  // Mock order book data based on current price
+  // Filtered markets for search
+  const filteredMarkets = markets.filter(m => 
+    m.symbol.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    m.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   const asks = [
     { price: currentPrice * 1.0005, amount: 0.15169 },
     { price: currentPrice * 1.0004, amount: 0.31689 },
@@ -39,15 +53,31 @@ export default function Spot() {
       toast.error("يرجى تسجيل الدخول أولاً");
       return;
     }
-    toast.success("تم تقديم الطلب بنجاح");
+    if (!amount || parseFloat(amount) <= 0) {
+      toast.error("يرجى إدخال مبلغ صحيح");
+      return;
+    }
+
+    const newOrder = {
+      id: Date.now(),
+      symbol: selectedCoin.symbol.toUpperCase() + "/USDT",
+      side: side === "buy" ? "شراء" : "بيع",
+      type: orderType,
+      price: orderType === "Limit" ? priceInput : currentPrice,
+      amount,
+      time: new Date().toLocaleTimeString("ar-EG")
+    };
+
+    setOpenOrders([newOrder, ...openOrders]);
+    toast.success("تم تقديم طلب التداول الفوري بنجاح!");
     setAmount("");
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto px-2 lg:px-4 py-4">
+    <div dir="rtl" className="max-w-[1400px] mx-auto px-2 lg:px-4 py-4 text-right">
       {/* Top Bar / Pair Selector */}
       <div className="panel p-3 mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setShowCoinModal(true)}>
           <div className="font-heading font-bold text-lg flex items-center gap-1">
             {selectedCoin.symbol ? selectedCoin.symbol.toUpperCase() : "BTC"}/USDT <ChevronDown size={16} />
           </div>
@@ -56,7 +86,7 @@ export default function Spot() {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <button className="px-3 py-1.5 rounded-lg bg-[var(--ax-s2)] text-xs font-semibold">التداول الفوري</button>
+          <button className="px-3 py-1.5 rounded-lg bg-[var(--ax-s2)] text-xs font-semibold text-cyan">التداول الفوري</button>
         </div>
       </div>
 
@@ -120,14 +150,27 @@ export default function Spot() {
           {/* Order Type */}
           <div className="mb-4">
             <div className="text-xs text-[var(--ax-text3)] mb-1">نوع الطلب</div>
-            <div className="p-2 rounded-xl bg-[var(--ax-s2)] text-sm flex justify-between items-center">
-              <span>طلب السوق (Market)</span>
+            <div onClick={() => setShowOrderTypeModal(true)} className="p-2 rounded-xl bg-[var(--ax-s2)] text-sm flex justify-between items-center cursor-pointer hover:border-cyan border border-transparent">
+              <span>{orderType === "Market" ? "طلب السوق (Market)" : "طلب حدي (Limit)"}</span>
               <ChevronDown size={15} />
             </div>
           </div>
 
           {/* Form Inputs */}
           <form onSubmit={handleTrade} className="space-y-3">
+            {orderType === "Limit" && (
+              <div>
+                <div className="text-xs text-[var(--ax-text3)] mb-1">السعر (USDT)</div>
+                <input
+                  type="number"
+                  step="any"
+                  value={priceInput}
+                  onChange={(e) => setPriceInput(e.target.value)}
+                  className="w-full bg-[var(--ax-s2)] border border-[var(--ax-border)] rounded-xl px-3 py-2 text-sm mono focus:outline-none focus:border-cyan text-right"
+                />
+              </div>
+            )}
+
             <div>
               <div className="text-xs text-[var(--ax-text3)] mb-1">المبلغ</div>
               <div className="relative">
@@ -137,7 +180,7 @@ export default function Spot() {
                   placeholder="0.00"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="w-full bg-[var(--ax-s2)] border border-[var(--ax-border)] rounded-xl px-3 py-2.5 text-sm mono focus:outline-none focus:border-cyan"
+                  className="w-full bg-[var(--ax-s2)] border border-[var(--ax-border)] rounded-xl px-3 py-2.5 text-sm mono focus:outline-none focus:border-cyan text-right pl-12"
                 />
                 <span className="absolute left-3 top-2.5 text-xs text-[var(--ax-text3)]">{selectedCoin.symbol ? selectedCoin.symbol.toUpperCase() : "BTC"}</span>
               </div>
@@ -166,7 +209,7 @@ export default function Spot() {
             onClick={() => setActiveTab("open")}
             className={`pb-2 border-b-2 transition-colors ${activeTab === "open" ? "border-cyan text-cyan" : "border-transparent text-[var(--ax-text3)]"}`}
           >
-            الطلبات المفتوحة (0)
+            الطلبات المفتوحة ({openOrders.length})
           </button>
           <button
             type="button"
@@ -184,11 +227,96 @@ export default function Spot() {
           </button>
         </div>
 
-        <div className="py-10 text-center">
-          <div className="text-sm text-[var(--ax-text3)] mb-2">لا توجد طلبات مفتوحة</div>
-          <div className="text-xs text-[var(--ax-text3)]">دع أفضل المتداولين يتداولون من أجلك</div>
-        </div>
+        {activeTab === "open" && openOrders.length === 0 ? (
+          <div className="py-10 text-center">
+            <div className="text-sm text-[var(--ax-text3)] mb-2">لا توجد طلبات مفتوحة</div>
+            <div className="text-xs text-[var(--ax-text3)]">دع أفضل المتداولين يتداولون من أجلك</div>
+          </div>
+        ) : activeTab === "open" ? (
+          <div className="space-y-2">
+            {openOrders.map((ord) => (
+              <div key={ord.id} className="p-3 rounded-xl bg-[var(--ax-s2)] flex justify-between items-center text-xs">
+                <div>
+                  <div className="font-bold text-sm mb-1">{ord.symbol} <span className={ord.side === "شراء" ? "text-green" : "text-red"}>{ord.side}</span></div>
+                  <div className="text-[var(--ax-text3)]">النوع: {ord.type} | السعر: ${fmtPrice(ord.price)} | الكمية: {ord.amount}</div>
+                </div>
+                <div className="text-left">
+                  <button onClick={() => setOpenOrders(openOrders.filter(o => o.id !== ord.id))} className="px-2.5 py-1 rounded bg-red/20 text-red hover:bg-red/30">إلغاء</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="py-10 text-center text-sm text-[var(--ax-text3)]">لا توجد بيانات</div>
+        )}
       </div>
+
+      {/* MODALS */}
+      {/* 1. Coin Selector Modal */}
+      {showCoinModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="panel w-full max-w-md p-4 max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-heading font-bold text-base">اختر العملة</h3>
+              <button onClick={() => setShowCoinModal(false)} className="p-1"><X size={18} /></button>
+            </div>
+            <div className="relative mb-3">
+              <Search size={16} className="absolute right-3 top-3 text-[var(--ax-text3)]" />
+              <input
+                type="text"
+                placeholder="ابحث عن عملة..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[var(--ax-s2)] border border-[var(--ax-border)] rounded-xl py-2 pr-9 pl-3 text-sm focus:outline-none focus:border-cyan text-right"
+              />
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-1 divide-y divide-[var(--ax-border)]">
+              {filteredMarkets.map((m) => (
+                <div
+                  key={m.id}
+                  onClick={() => { setSelectedCoin(m); setShowCoinModal(false); }}
+                  className="flex justify-between items-center py-2.5 px-2 hover:bg-[var(--ax-s2)] cursor-pointer rounded-lg transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <img src={m.image} alt="" className="w-6 h-6 rounded-full" />
+                    <span className="font-bold text-sm">{m.symbol.toUpperCase()}<span className="text-[var(--ax-text3)] text-xs">/USDT</span></span>
+                  </div>
+                  <div className="text-left mono text-sm">
+                    <div>${fmtPrice(m.live_price)}</div>
+                    <div className={`text-xs ${(m.price_change_percentage_24h || 0) >= 0 ? "text-green" : "text-red"}`}>
+                      {(m.price_change_percentage_24h || 0) >= 0 ? "+" : ""}{(m.price_change_percentage_24h || 0).toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Order Type Modal */}
+      {showOrderTypeModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="panel w-full max-w-xs p-5 text-center">
+            <h3 className="font-heading font-bold text-base mb-4">اختر نوع الطلب</h3>
+            <div className="space-y-2 mb-4">
+              <button
+                onClick={() => { setOrderType("Market"); setShowOrderTypeModal(false); }}
+                className={`w-full py-3 rounded-xl text-sm font-bold border transition-colors ${orderType === "Market" ? "border-cyan bg-cyan/10 text-cyan" : "border-[var(--ax-border)] bg-[var(--ax-s2)]"}`}
+              >
+                طلب السوق (Market)
+              </button>
+              <button
+                onClick={() => { setOrderType("Limit"); setShowOrderTypeModal(false); }}
+                className={`w-full py-3 rounded-xl text-sm font-bold border transition-colors ${orderType === "Limit" ? "border-cyan bg-cyan/10 text-cyan" : "border-[var(--ax-border)] bg-[var(--ax-s2)]"}`}
+              >
+                طلب حدي (Limit)
+              </button>
+            </div>
+            <button onClick={() => setShowOrderTypeModal(false)} className="w-full py-2.5 rounded-xl bg-[var(--ax-s2)] text-sm font-semibold">إلغاء</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

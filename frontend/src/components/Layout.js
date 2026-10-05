@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { useCrypto, fmtPrice } from "../context/CryptoContext";
 import { toast } from "sonner";
 import api from "../lib/api";
+import BottomNav from "./BottomNav";
 
 const NAV = [
   { to: "/", label: "الرئيسية" },
@@ -68,7 +69,7 @@ export default function Layout({ children }) {
   const isActive = (to) => (to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(to));
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col pb-16 md:pb-0">
       <header className="sticky top-0 z-50 bg-[var(--ax-bg)]/95 backdrop-blur border-b border-[var(--ax-border)]">
         <div className="max-w-[1400px] mx-auto px-4 lg:px-6 flex items-center gap-6 h-16">
           <Link to="/" className="flex items-center gap-2" data-testid="logo-link">
@@ -146,7 +147,7 @@ export default function Layout({ children }) {
             <div className="font-semibold mb-3">المنتجات</div>
             <ul className="space-y-2 text-[var(--ax-text2)]">
               <li><Link to="/spot">التداول الفوري</Link></li>
-              <li><Link to="/futures">العقود الآجلة</Link></li>
+              <li><Link to="/futures">العقود الآجلة</Link><span className="text-[var(--ax-text3)]"></span></li>
               <li><Link to="/markets">الأسواق</Link></li>
             </ul>
           </div>
@@ -163,6 +164,8 @@ export default function Layout({ children }) {
           </div>
         </div>
       </footer>
+
+      <BottomNav />
     </div>
   );
 }

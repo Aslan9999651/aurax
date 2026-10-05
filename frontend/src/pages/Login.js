@@ -4,10 +4,11 @@ import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 import api, { apiErr } from "../lib/api";
 
-// REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 function googleLogin() {
-  const redirectUrl = window.location.origin + "/wallet";
-  window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+  // تم ربط زر الدخول مباشرة بحساب Supabase الخاص بك لإنهاء الاعتماد على أي منصة وسيطة
+  const supabaseUrl = "https://txfbymcnrccquwshxgxe.supabase.co";
+  const redirectUrl = window.location.origin + "/wallet"; 
+  window.location.href = `${supabaseUrl}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}`;
 }
 
 export default function Login() {

@@ -5,6 +5,12 @@ import { MailCheck } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import api, { apiErr } from "../lib/api";
 
+function googleLogin() {
+  const supabaseUrl = "https://txfbymcnrccquwshxgxe.supabase.co";
+  const redirectUrl = window.location.origin + "/wallet";
+  window.location.href = `${supabaseUrl}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}`;
+}
+
 export default function Register() {
   const { applyAuth } = useAuth();
   const nav = useNavigate();
@@ -67,6 +73,12 @@ export default function Register() {
                 {busy ? "جارٍ الإنشاء…" : "إنشاء الحساب"}
               </button>
             </form>
+            
+            <div className="flex items-center gap-3 my-4 text-xs text-[var(--ax-text3)]"><div className="flex-1 h-px bg-[var(--ax-border)]" />أو<div className="flex-1 h-px bg-[var(--ax-border)]" /></div>
+            <button type="button" onClick={googleLogin} data-testid="google-register-btn" className="w-full py-3 rounded-lg bg-white text-[#111] font-semibold text-sm flex items-center justify-center gap-2">
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-4 h-4" /> التسجيل عبر Google
+            </button>
+
             <p className="text-center text-sm text-[var(--ax-text3)] mt-6">لديك حساب؟ <Link to="/login" className="text-cyan font-semibold">سجّل الدخول</Link></p>
           </>
         ) : (

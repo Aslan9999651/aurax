@@ -166,7 +166,7 @@ SIM_SAMPLES = [
     {"ntype": "market", "message": "سيولة إضافية تمت إضافتها لسوق العقود الآجلة."},
     {"ntype": "withdraw", "message": "طلب سحب 50,000 USDT قيد المراجعة الأمنية."},
     {"ntype": "deposit", "message": "اكتمل إيداع 9,200 USDT بنجاح."}
-            ]
+]
 
 
 async def sim_events():
